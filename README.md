@@ -6,7 +6,7 @@ Tu explores la forêt, tu ramasses les 3000 objets, tu les tries à la table et 
 ## Jouer (Windows)
 
 1. Va dans l'onglet **Releases** de ce dépôt (colonne de droite).
-2. Télécharge `Gardien_forestier_v0.7.0_windows.zip`.
+2. Télécharge le zip de la dernière version (`Gardien_forestier_windows.zip`).
 3. Fais clic droit sur le zip puis **Extraire tout...** (ne lance pas le jeu depuis l'intérieur du zip).
 4. Double-clique sur **`Gardien forestier.exe`**.
 
