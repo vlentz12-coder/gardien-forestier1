@@ -1,0 +1,13 @@
+MODELES 3D (.glb) - dépose tes fichiers dans CE dossier, avec ces noms exacts.
+Le jeu les prend automatiquement (taille et position réglées tout seul).
+Variantes possibles : feuille.glb, feuille_2.glb, feuille_3.glb, feuille_4.glb (au hasard).
+
+Objets à ramasser        : feuille, branche, pomme_de_pin, dechet, champignon, caillou
+Décor                    : arbre
+Animaux                  : ecureuil, herisson, renard, cerf
+
+Packs gratuits (CC0) conseillés : Kenney "Nature Kit", Quaternius "Stylized Nature MegaKit".
+Un fichier absent = le jeu garde sa forme simple pour cet objet.
+
+Skin de feuille : dépose une image feuille.png (de préférence fond transparent) dans ce dossier.
+Elle est appliquée sur les feuilles de base, avec les teintes verte / fanée / brune.
