@@ -1,6 +1,6 @@
 class_name Minimap
 extends Control
-## Mini-carte (en haut à droite) : camp, chemins, repères de zones (S, M, V, C), joueur.
+## Mini-carte (en haut à droite) : constructions, chemins, repères de zones (S, M, V, C), joueur.
 ## Les objets restants n'apparaissent qu'avec le Drone forestier.
 
 var main
@@ -23,9 +23,12 @@ func _draw() -> void:
         var q: Vector2 = c + (Vector2(p.x, p.y) - here) * px
         if q.distance_to(c) < rad - 2.0:
             draw_circle(q, 1.4, Color(0.75, 0.58, 0.35, 0.8))
-    var camp: Vector2 = c + (Vector2.ZERO - here) * px
-    if camp.distance_to(c) < rad - 5.0:
-        draw_rect(Rect2(camp - Vector2(4, 4), Vector2(8, 8)), Color(0.95, 0.75, 0.3))
+    # Constructions posées : [position, couleur, demi-taille]
+    for m in main.map_marks():
+        var q3: Vector2 = c + (Vector2(m[0].x, m[0].z) - here) * px
+        if q3.distance_to(c) < rad - 5.0:
+            var hs: Vector2 = m[2]
+            draw_rect(Rect2(q3 - hs, hs * 2.0), m[1])
     if main.up["drone"]:
         for o in main.items:
             var op: Vector3 = o.global_position

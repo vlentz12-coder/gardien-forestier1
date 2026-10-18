@@ -120,7 +120,7 @@ func _arrive() -> void:
             if kind == "squirrel":
                 info = main.helper_take(target)
                 target = null
-                dest = Vector3(0, 0, 1.4)
+                dest = main.table_drop_point()
             else:
                 dest = main.pile_pos()
             state = "return"

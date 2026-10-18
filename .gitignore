@@ -1,0 +1,16 @@
+# Cache Godot (régénéré automatiquement à l'ouverture du projet)
+.godot/
+
+# Builds exportés : ils vont dans les Releases GitHub, pas dans le dépôt
+build/
+export/
+*.exe
+*.pck
+*.zip
+
+*.translation
+
+# Fichiers système
+Thumbs.db
+desktop.ini
+.DS_Store

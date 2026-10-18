@@ -1,7 +1,7 @@
 class_name Player
 extends CharacterBody3D
 ## Joueur à la première personne.
-## Vue : souris capturée, OU clic maintenu, OU flèches, OU mode "bords d'écran" (Tab).
+## Vue : souris capturée, OU clic maintenu, OU flèches, OU mode "bords d'écran" (C).
 
 signal pick_pressed
 signal interact_pressed
@@ -13,13 +13,16 @@ var cam: Camera3D
 var yaw := 0.0
 var pitch := 0.0
 var enabled := true
-var edge_mode := false   # Tab : regarder en poussant la souris vers les bords
+var edge_mode := false   # C : regarder en poussant la souris vers les bords
 var motion_count := 0
 var speed_mult := 1.0
 var stamina := 100.0
 var exhausted := false
 var sprinting := false
 var regen_delay := 0.0
+var base_fov := 75.0      # champ de vision (Options > Graphismes)
+var sens_mult := 1.0       # sensibilité (Options > Commandes)
+var invert_y := false
 
 const SPRINT_MULT := 1.65
 const STAMINA_MAX := 100.0
@@ -51,12 +54,12 @@ func _input(event: InputEvent) -> void:
     if event is InputEventMouseMotion:
         motion_count += 1
         if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED or Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
-            _look(event.relative.x * SENS, event.relative.y * SENS)
+            _look(event.relative.x * SENS * sens_mult, event.relative.y * SENS * sens_mult * (-1.0 if invert_y else 1.0))
     elif event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
         if not edge_mode and Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
             Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
         pick_pressed.emit()
-    elif event is InputEventKey and event.pressed and not event.echo and event.physical_keycode == KEY_TAB:
+    elif event.is_action_pressed("edge_mode"):
         edge_mode = not edge_mode
         grab()
     elif event.is_action_pressed("pick"):
@@ -64,16 +67,14 @@ func _input(event: InputEvent) -> void:
     elif event.is_action_pressed("interact"):
         interact_pressed.emit()
         get_viewport().set_input_as_handled()
-    elif event.is_action_pressed("ui_cancel"):
-        Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 
 func _physics_process(delta: float) -> void:
     if not enabled:
         velocity = Vector3.ZERO
         return
-    # Flèches : regarder au clavier
-    var lx := int(Input.is_physical_key_pressed(KEY_LEFT)) - int(Input.is_physical_key_pressed(KEY_RIGHT))
-    var ly := int(Input.is_physical_key_pressed(KEY_UP)) - int(Input.is_physical_key_pressed(KEY_DOWN))
+    # Flèches (modifiables) : regarder au clavier
+    var lx := Input.get_action_strength("look_left") - Input.get_action_strength("look_right")
+    var ly := Input.get_action_strength("look_up") - Input.get_action_strength("look_down")
     yaw += lx * 1.8 * delta
     pitch = clampf(pitch + ly * 1.5 * delta, -1.4, 1.4)
     # Mode bords d'écran (ne dépend d'aucun événement souris)
@@ -89,9 +90,9 @@ func _physics_process(delta: float) -> void:
     cam.rotation.x = pitch
     # Déplacement
     var dir := Input.get_vector("move_left", "move_right", "move_forward", "move_back")
-    # Sprint (Maj) avec endurance
+    # Sprint (Maj par défaut) avec endurance
     var moving := dir.length() > 0.1
-    sprinting = Input.is_physical_key_pressed(KEY_SHIFT) and moving and not exhausted and stamina > 0.0
+    sprinting = Input.is_action_pressed("sprint") and moving and not exhausted and stamina > 0.0
     if sprinting:
         stamina = maxf(0.0, stamina - 28.0 * delta)
         regen_delay = 0.8
@@ -103,7 +104,7 @@ func _physics_process(delta: float) -> void:
             stamina = minf(STAMINA_MAX, stamina + (16.0 if moving else 24.0) * delta)
         if exhausted and stamina >= 25.0:
             exhausted = false
-    cam.fov = lerpf(cam.fov, 84.0 if sprinting else 75.0, 8.0 * delta)
+    cam.fov = lerpf(cam.fov, base_fov + 9.0 if sprinting else base_fov, 8.0 * delta)
     velocity = (transform.basis * Vector3(dir.x, 0, dir.y)) * SPEED * speed_mult * (SPRINT_MULT if sprinting else 1.0)
     move_and_slide()
     position.x = clampf(position.x, -GameData.AREA, GameData.AREA)

@@ -1,10 +1,9 @@
 class_name SortUI
 extends CanvasLayer
-## Table : onglets Tri / Outils / Chantiers.
+## Table : onglets Tri / Outils (les chantiers sont dans le menu de construction, Tab).
 
 signal bin_chosen(i: int)
 signal bought(key: String)
-signal built(key: String)
 signal closed
 
 var panel: PanelContainer
@@ -15,7 +14,8 @@ var left_label: Label
 var cur_row: HBoxContainer
 var bins_box: GridContainer
 var ups_box: VBoxContainer
-var proj_box: VBoxContainer
+var back: Button
+var note: Label
 
 func _ready() -> void:
     visible = false
@@ -65,6 +65,11 @@ func _ready() -> void:
     t1.add_child(bins_box)
     left_label = Label.new()
     t1.add_child(left_label)
+    note = Label.new()
+    note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    note.custom_minimum_size = Vector2(600, 0)
+    note.add_theme_font_size_override("font_size", 15)
+    t1.add_child(note)
     tabs.set_tab_title(0, "Tri (touches 1-6)")
 
     # --- Onglet Outils ---
@@ -76,23 +81,14 @@ func _ready() -> void:
     tabs.add_child(t2)
     tabs.set_tab_title(1, "Outils")
 
-    # --- Onglet Chantiers ---
-    var t3 := ScrollContainer.new()
-    t3.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-    proj_box = VBoxContainer.new()
-    proj_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    t3.add_child(proj_box)
-    tabs.add_child(t3)
-    tabs.set_tab_title(2, "Chantiers")
-
-    var back := Button.new()
-    back.text = "Retourner dans la forêt (E)"
+    back = Button.new()
     back.pressed.connect(func(): closed.emit())
     vb.add_child(back)
 
 func open(st: Dictionary) -> void:
     visible = true
     tabs.current_tab = 0
+    back.text = "Retourner dans la forêt (%s)" % Settings.key_name("interact")
     refresh(st)
 
 func on_sort_tab() -> bool:
@@ -138,9 +134,17 @@ func refresh(st: Dictionary) -> void:
 
     for c in bins_box.get_children():
         c.queue_free()
+    var fill: Array = st["fill"]
+    var bcap: int = st["bucket_cap"]
+    note.text = "Chaque bac verse son produit dans un seau posé devant la table. Apporte les seaux à %s !" % GameData.MACHINE_NAME
+    note.add_theme_color_override("font_color", Color(0.8, 0.9, 0.75))
     for i in GameData.CATS.size():
         var b := Button.new()
-        b.text = "%d · %s %s" % [i + 1, GameData.CATS[i]["icon"], GameData.CATS[i]["name"]]
+        var full: bool = fill[i] >= bcap
+        b.text = "%d · %s %s
+🪣 %s %d/%d%s" % [i + 1, GameData.CATS[i]["icon"], GameData.CATS[i]["name"], GameData.CATS[i]["product"], fill[i], bcap, "  PLEIN" if full else ""]
+        if full:
+            b.add_theme_color_override("font_color", Color(1.0, 0.55, 0.45))
         b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
         b.disabled = not has
         b.pressed.connect(func(): bin_chosen.emit(i))
@@ -149,10 +153,10 @@ func refresh(st: Dictionary) -> void:
     # Outils
     for c in ups_box.get_children():
         c.queue_free()
-    var pct: float = st["pct"]
-    if pct < GameData.TOOLS_UNLOCK:
+    var collected: int = st["collected"]
+    if collected < GameData.TOOLS_UNLOCK_COUNT:
         var lock := Label.new()
-        lock.text = "🔒 Outils débloqués à %d %% de restauration (actuellement %d %%)" % [roundi(GameData.TOOLS_UNLOCK * 100.0), roundi(pct * 100.0)]
+        lock.text = "🔒 Outils débloqués après %d objets ramassés (actuellement %d)" % [GameData.TOOLS_UNLOCK_COUNT, collected]
         ups_box.add_child(lock)
     else:
         for u in GameData.UPGRADES:
@@ -168,22 +172,10 @@ func refresh(st: Dictionary) -> void:
                 txt += "  [niv %d/%d]" % [lvl, mx]
             ups_box.add_child(_row(txt, "Acquis" if done else "%d 🌿" % cost, done or blocked or int(st["res"]) < cost, func(): bought.emit(key)))
 
-    # Chantiers
-    for c in proj_box.get_children():
-        c.queue_free()
-    for p in GameData.PROJECTS:
-        var key: String = p["key"]
-        var done: bool = st["proj"].get(key, false)
-        var afford := true
-        var parts := PackedStringArray()
-        for c in p["cost"]:
-            var need: int = p["cost"][c]
-            var have: int = st["stock"][c]
-            parts.append("%s %d/%d" % [GameData.CATS[c]["use"], mini(have, need), need])
-            if have < need:
-                afford = false
-        var txt: String = "%s – %s\n%s" % [p["name"], p["desc"], " · ".join(parts)]
-        proj_box.add_child(_row(txt, "Construit ✔" if done else "Construire", done or not afford, func(): built.emit(key)))
+## Message important dans la fenêtre de tri (le HUD est caché derrière).
+func flash(text: String) -> void:
+    note.text = text
+    note.add_theme_color_override("font_color", Color(1.0, 0.55, 0.45))
 
 func shake() -> void:
     panel.pivot_offset = panel.size / 2.0
