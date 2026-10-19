@@ -1,6 +1,6 @@
 # Gardien forestier
 
-Petit jeu 3D réalisé avec **Godot 4.7.2** (prototype, version 0.7.0).
+Petit jeu 3D réalisé avec **Godot 4.7.2** (prototype, version 0.7.1).
 Tu explores la forêt, tu ramasses les 3000 objets, tu les tries à la table et tu apportes les produits à LaMachineQuiRestoreLaForêtator pour restaurer la clairière. Pour finir, tu te construis un chalet meublé dans la forêt rangée.
 
 ## Jouer (Windows)

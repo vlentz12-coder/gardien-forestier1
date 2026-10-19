@@ -1596,6 +1596,7 @@ func _spawn_building(key: String, pos: Vector3, yaw: float) -> Node3D:
 	add_child(n)
 	placed[key] = n
 	_set_obstacle(key, pos)
+	_clear_grass_at(pos, float(d["foot"]))
 	match key:
 		"table":
 			rack = n.get_node("Rack")
@@ -1799,6 +1800,7 @@ func _confirm_place() -> void:
 		n.rotation.y = yaw
 		n.visible = true
 		_set_obstacle(key, p)
+		_clear_grass_at(p, float(d["foot"]))
 		_say("%s déplacé(e)" % d["name"])
 	else:
 		_pay(d["cost"])
@@ -1823,6 +1825,17 @@ func _end_place(_ok: bool) -> void:
 	mode = "play"
 	hud_prompt.text = ""
 	player.grab()
+
+## Plus d'herbe ni de fleurs sous une construction (sinon elles traversent le plancher du chalet).
+func _clear_grass_at(p: Vector3, r: float) -> void:
+	if grass_mm != null:
+		for i in grass_mm.instance_count:
+			var tr := grass_mm.get_instance_transform(i)
+			if Vector2(tr.origin.x - p.x, tr.origin.z - p.z).length() < r:
+				grass_mm.set_instance_transform(i, Transform3D(Basis.from_scale(Vector3.ZERO), tr.origin))
+	for f in flowers:
+		if Vector2(f.position.x - p.x, f.position.z - p.z).length() < r:
+			f.position.y = -1.0
 
 ## Les objets qui se trouvent sous une nouvelle construction sont poussés juste à côté.
 func _clear_items_at(p: Vector3, r: float) -> void:
