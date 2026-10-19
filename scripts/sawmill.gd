@@ -6,6 +6,8 @@ extends Node3D
 signal produced(planks: int)
 
 const TIME_PER_LOG := 0.45
+
+var level := 1               # niveau 2 : 3 planches par bûche et 2× plus rapide ; niveau 3 : 4 planches
 const WOOD := Color(0.55, 0.37, 0.2)
 
 var queue := 0               # bûches en attente de découpe
@@ -61,11 +63,11 @@ func _process(delta: float) -> void:
 		return
 	_blade.rotate_object_local(Vector3.UP, 25.0 * delta)
 	_t += delta
-	if _t >= TIME_PER_LOG:
+	if _t >= (TIME_PER_LOG if level < 2 else TIME_PER_LOG / 2.0):
 		_t = 0.0
 		queue -= 1
 		_dust()
-		produced.emit(GameData.PLANKS_PER_LOG)
+		produced.emit(GameData.planks_per_log(level))
 
 ## Point visé par le joueur pour charger les bûches (la trémie).
 func hopper_point() -> Vector3:
@@ -76,7 +78,8 @@ func add_logs(n: int) -> void:
 
 ## Met à jour l'étiquette, la trémie et la pile de planches.
 func set_info(planks: int) -> void:
-	_label.text = "Scierie\nBûches à scier : %d · Planches : %d" % [queue, planks] if queue > 0 else "Scierie\nPlanches : %d" % planks
+	var title := "Scierie" if level < 2 else "Scierie (niv. %d)" % level
+	_label.text = "%s\nBûches à scier : %d · Planches : %d" % [title, queue, planks] if queue > 0 else "%s\nPlanches : %d" % [title, planks]
 	for k in _hopper_logs.size():
 		_hopper_logs[k].visible = queue > k * 3
 	for k in _stack.size():

@@ -1,0 +1,18 @@
+MUSIQUES - toutes sous licence CC0 (domaine public, aucune attribution obligatoire)
+================================================================================
+
+Menu principal
+  menu_chill_lofi.mp3  - "Chill lofi inspired" par omfgdude (OMF-Games)
+  https://opengameart.org/content/chill-lofi-inspired
+
+Pendant la partie (playlist aléatoire)
+  jeu_boredom.ogg             - "Boredom"
+  jeu_love.ogg                - "Love"
+  jeu_lost_in_your_eyes.ogg   - "Lost In Your Eyes"
+  jeu_you_loved_me_once.ogg   - "You Loved Me Once"
+  jeu_night_driving.ogg       - "Night Driving"
+  par Holizna, album "Relaxing Instrumentals"
+  https://opengameart.org/content/relaxing-instrumentals-collection
+
+Licence : https://creativecommons.org/publicdomain/zero/1.0/
+Merci à eux !

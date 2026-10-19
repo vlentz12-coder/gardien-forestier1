@@ -94,6 +94,7 @@ func _tab_graphics() -> void:
 func _tab_audio() -> void:
 	var g := _page("Audio")
 	_slider(g, "Volume général", "audio", "master", 0.0, 1.0, 0.05, " %", 100.0)
+	_slider(g, "Musique", "audio", "music", 0.0, 1.0, 0.05, " %", 100.0)
 	_slider(g, "Effets sonores", "audio", "sfx", 0.0, 1.0, 0.05, " %", 100.0)
 	_slider(g, "Ambiance (oiseaux)", "audio", "ambient", 0.0, 1.0, 0.05, " %", 100.0)
 	_check(g, "Couper le son", "audio", "mute")

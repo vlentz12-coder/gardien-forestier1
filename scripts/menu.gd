@@ -1,10 +1,10 @@
 extends Control
-## Menu principal : continuer, nouvelle partie, options, quitter.
+## Menu principal : continuer, charger une partie, nouvelle partie, options, quitter.
 ## Le fond (ciel, sapins, lucioles) est dessiné dans _draw().
 
 var home: VBoxContainer
 var options: OptionsMenu
-var confirm: PanelContainer
+var loader: LoadMenu
 var loading: Label
 var t := 0.0
 var flies: Array = []    # [position relative, phase, vitesse]
@@ -12,6 +12,7 @@ var flies: Array = []    # [position relative, phase, vitesse]
 func _ready() -> void:
 	get_tree().paused = false
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	Music.play_menu()
 	theme = UiTheme.get_theme()
 	for i in 45:
 		flies.append([Vector2(randf(), randf_range(0.35, 0.95)), randf() * TAU, randf_range(0.3, 1.0)])
@@ -34,7 +35,7 @@ func _ready() -> void:
 	home.add_child(panel)
 	var vb := UiTheme.vbox(panel, 12)
 	var has_save := SaveGame.exists()
-	var cont := UiTheme.button(vb, "Continuer", func() -> void: _start(true))
+	var cont := UiTheme.button(vb, "Continuer", func() -> void: _start(SaveGame.latest()))
 	cont.disabled = not has_save
 	if has_save:
 		var info := Label.new()
@@ -43,7 +44,9 @@ func _ready() -> void:
 		info.add_theme_font_size_override("font_size", 13)
 		info.add_theme_color_override("font_color", Color(0.75, 0.82, 0.72))
 		vb.add_child(info)
-	var new_btn := UiTheme.button(vb, "Nouvelle partie", _new_game)
+	var load_btn := UiTheme.button(vb, "Charger une partie", _show_load)
+	load_btn.disabled = not has_save
+	var new_btn := UiTheme.button(vb, "Nouvelle partie", func() -> void: _start(0))
 	UiTheme.button(vb, "Options", _show_options)
 	UiTheme.button(vb, "Quitter", func() -> void: get_tree().quit())
 	(cont if has_save else new_btn).grab_focus.call_deferred()
@@ -53,17 +56,11 @@ func _ready() -> void:
 	options.closed.connect(_back)
 	center.add_child(options)
 
-	confirm = PanelContainer.new()
-	confirm.visible = false
-	center.add_child(confirm)
-	var cv := UiTheme.vbox(confirm, 12)
-	UiTheme.title(cv, "Une sauvegarde existe déjà", 24)
-	var warn := Label.new()
-	warn.text = "Elle sera remplacée dès que la nouvelle partie sera sauvegardée."
-	warn.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	cv.add_child(warn)
-	UiTheme.button(cv, "Commencer une nouvelle partie", func() -> void: _start(false))
-	UiTheme.button(cv, "Annuler", _back)
+	loader = LoadMenu.new()
+	loader.visible = false
+	loader.closed.connect(_back)
+	loader.chosen.connect(_start)
+	center.add_child(loader)
 
 	loading = UiTheme.title(self, "Chargement de la forêt…", 34)
 	loading.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -84,17 +81,9 @@ func _process(delta: float) -> void:
 	t += delta
 	queue_redraw()
 
-func _input(event: InputEvent) -> void:
-	if confirm.visible and event.is_action_pressed("ui_cancel"):
-		get_viewport().set_input_as_handled()
-		_back()
-
-func _new_game() -> void:
-	if SaveGame.exists():
-		home.visible = false
-		confirm.visible = true
-	else:
-		_start(false)
+func _show_load() -> void:
+	home.visible = false
+	loader.open()
 
 func _show_options() -> void:
 	home.visible = false
@@ -102,13 +91,15 @@ func _show_options() -> void:
 
 func _back() -> void:
 	options.visible = false
-	confirm.visible = false
+	loader.visible = false
 	home.visible = true
 
-func _start(load_save: bool) -> void:
-	SaveGame.load_requested = load_save
+## n : numéro de la partie à charger, 0 pour une nouvelle partie (elle aura sa propre sauvegarde).
+func _start(n: int) -> void:
+	SaveGame.slot = n
+	SaveGame.load_requested = n > 0
 	home.visible = false
-	confirm.visible = false
+	loader.visible = false
 	loading.visible = true
 	# Deux images pour afficher "Chargement…" avant que la génération de la forêt ne bloque l'écran
 	await get_tree().process_frame

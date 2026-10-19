@@ -2,6 +2,7 @@ class_name Player
 extends CharacterBody3D
 ## Joueur à la première personne.
 ## Vue : souris capturée, OU clic maintenu, OU flèches, OU mode "bords d'écran" (C).
+## Espace : sauter (enchaîner les sauts dès l'atterrissage = bunny hop).
 
 signal pick_pressed
 signal interact_pressed
@@ -20,12 +21,27 @@ var stamina := 100.0
 var exhausted := false
 var sprinting := false
 var regen_delay := 0.0
+var stamina_max := 100.0   # +50 % avec la cabane perchée
+var regen_mult := 1.0      # ×1,5 avec le puits
 var base_fov := 75.0      # champ de vision (Options > Graphismes)
 var sens_mult := 1.0       # sensibilité (Options > Commandes)
 var invert_y := false
 
 const SPRINT_MULT := 1.65
 const STAMINA_MAX := 100.0
+# Saut et « bunny hop » : ressauter dès l'atterrissage (ou garder Espace enfoncé) garde l'élan et l'augmente un peu.
+const JUMP_SPEED := 4.8
+const GRAVITY := 13.0
+const JUMP_COST := 4.0
+const HOP_GAIN := 0.08       # +8 % de vitesse par saut enchaîné
+const HOP_MAX := 1.6
+const HOP_WINDOW := 0.15     # temps au sol toléré entre deux sauts pour garder l'élan
+const AIR_STEER := 5.0       # contrôle en l'air (on peut tourner sans perdre sa vitesse)
+
+var hop := 1.0              # multiplicateur d'élan du bunny hop
+var ground_time := 1.0
+var jump_buffer := 0.0
+var jumps := 0
 
 func _ready() -> void:
     cam = Camera3D.new()
@@ -101,12 +117,46 @@ func _physics_process(delta: float) -> void:
     else:
         regen_delay = maxf(0.0, regen_delay - delta)
         if regen_delay <= 0.0:
-            stamina = minf(STAMINA_MAX, stamina + (16.0 if moving else 24.0) * delta)
+            stamina = minf(stamina_max, stamina + (16.0 if moving else 24.0) * regen_mult * delta)
         if exhausted and stamina >= 25.0:
             exhausted = false
-    cam.fov = lerpf(cam.fov, base_fov + 9.0 if sprinting else base_fov, 8.0 * delta)
-    velocity = (transform.basis * Vector3(dir.x, 0, dir.y)) * SPEED * speed_mult * (SPRINT_MULT if sprinting else 1.0)
+    cam.fov = lerpf(cam.fov, base_fov + (9.0 if sprinting else 0.0) + (hop - 1.0) * 15.0, 8.0 * delta)
+    var target := (transform.basis * Vector3(dir.x, 0, dir.y)) * SPEED * speed_mult * (SPRINT_MULT if sprinting else 1.0)
+    var on_floor := is_on_floor() or position.y <= 0.001
+    jump_buffer = maxf(0.0, jump_buffer - delta)
+    if Input.is_action_just_pressed("jump"):
+        jump_buffer = 0.15     # un appui juste avant d'atterrir compte quand même
+    if on_floor:
+        ground_time += delta
+        if ground_time > HOP_WINDOW:
+            hop = 1.0          # resté au sol : l'élan retombe
+        velocity.x = target.x * hop
+        velocity.z = target.z * hop
+        velocity.y = 0.0
+        if (jump_buffer > 0.0 or Input.is_action_pressed("jump")) and stamina >= JUMP_COST:
+            if ground_time <= HOP_WINDOW and moving and jumps > 0:
+                hop = minf(HOP_MAX, hop + HOP_GAIN)
+                velocity.x = target.x * hop
+                velocity.z = target.z * hop
+            velocity.y = JUMP_SPEED
+            stamina -= JUMP_COST
+            regen_delay = maxf(regen_delay, 0.4)
+            jump_buffer = 0.0
+            ground_time = 0.0
+            jumps += 1
+    else:
+        ground_time = 0.0
+        velocity.y -= GRAVITY * delta
+        # En l'air : on garde sa vitesse, les touches orientent la trajectoire
+        var hv := Vector2(velocity.x, velocity.z)
+        if moving:
+            var want := Vector2(target.x, target.z).normalized() * maxf(hv.length(), target.length())
+            hv = hv.lerp(want, clampf(AIR_STEER * delta, 0.0, 1.0))
+        velocity.x = hv.x
+        velocity.z = hv.y
     move_and_slide()
     position.x = clampf(position.x, -GameData.AREA, GameData.AREA)
     position.z = clampf(position.z, -GameData.AREA, GameData.AREA)
-    position.y = 0.0
+    if position.y < 0.0:
+        position.y = 0.0
+        velocity.y = maxf(velocity.y, 0.0)

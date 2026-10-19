@@ -36,6 +36,21 @@ Le bouton **Placer** fait apparaître un fantôme de la construction devant toi 
 Les meubles apparaissent en fantômes dans le chalet tant qu'ils ne sont pas construits. Ils sont décoratifs :
 c'est la récompense de fin, un endroit où t'installer dans la forêt rangée.
 
+## Paliers de constructions et automatisation
+
+Les chantiers (onglet *Chantiers* du menu `Tab`) se débloquent en trois paliers :
+
+| Palier | Débloqué à | Constructions |
+|---|---|---|
+| 1 | dès le début | chemin de pierres, nichoir, pont, composteur, recyclerie, mangeoire, serre, arbre ancien |
+| 2 | 900 objets ramassés | puits (endurance plus rapide), potager (Graines +1 🌿), ruches (les fleurs refleurissent plus tôt), étang et ponton (Champignons +1 🌿) |
+| 3 | 1800 objets ramassés | cabane perchée (endurance max +50 %), kiosque (animaux aides +40 %), observatoire (balise les 600 derniers objets), Monument du gardien |
+
+Onglet *Essentiel* : améliorations des constructions de base.
+- **Scierie niveau 2** (3 planches par bûche, 2× plus rapide) puis **niveau 3** (4 planches par bûche, dès 1200 objets).
+- **Convoyeur** (dès 1200 objets) : les seaux partent tout seuls vers la machine.
+- **Trieuse automatique** (dès 1500 objets) : on dépose son sac à la table, elle trie seule.
+
 ## Scierie et planches
 
 Chaque objet en bois trié te donne une **bûche**. Vise la trémie de la scierie et appuie sur `E` pour y charger
@@ -63,15 +78,23 @@ Un seau plein bloque son bac : va le vider avant de continuer à trier.
 
 ## Menus, options et sauvegarde
 
-- **Menu principal** : Continuer, Nouvelle partie, Options, Quitter.
-- **Échap** en jeu : menu pause (Reprendre, Sauvegarder, Options, Menu principal, Quitter).
+- **Menu principal** : Continuer (dernière partie jouée), Charger une partie, Nouvelle partie, Options, Quitter.
+- **Échap** en jeu : menu pause (Reprendre, Sauvegarder, Charger, Options, Menu principal, Quitter).
 - **Options** :
   - *Graphismes* : mode d'affichage, résolution, VSync, limite d'images/s, échelle de rendu, MSAA, FXAA, ombres, SSAO, halo, brouillard, herbe, distance d'affichage, champ de vision, luminosité, compteur d'images/s.
-  - *Audio* : volume général, effets, ambiance, couper le son.
+  - *Audio* : volume général, musique, effets, ambiance, couper le son.
   - *Commandes* : sensibilité, inversion de l'axe vertical, toutes les touches modifiables.
   - *Jeu* : sauvegarde automatique, mini-carte, taille de l'interface.
 - **Sauvegarde** : manuelle depuis la pause, automatique toutes les 3 minutes et à la fermeture.
-  Fichiers : `%APPDATA%\Godot\app_userdata\Gardien forestier\`.
+  Chaque nouvelle partie a sa propre sauvegarde : rien n'est écrasé.
+- **Charger** : une fiche par partie, avec la date de début, la dernière sauvegarde, le temps de jeu,
+  les objets ramassés, l'avancement de la restauration et du chalet. Une partie peut aussi être supprimée.
+  Fichiers : `%APPDATA%\Godot\app_userdata\Gardien forestier\saves\`.
+
+## Musique
+
+Une playlist calme (piano, guitare) pendant la partie, un morceau lo-fi différent dans le menu,
+reliés par des fondus enchaînés. Volume réglable dans *Options > Audio > Musique*.
 
 ## Commandes par défaut
 
@@ -80,6 +103,7 @@ Un seau plein bloque son bac : va le vider avant de continuer à trier.
 | `W` `A` `S` `D` | Se déplacer (touches physiques, donc `Z` `Q` `S` `D` sur un clavier AZERTY) |
 | Souris / flèches | Regarder autour |
 | `Maj` | Sprinter (consomme l'endurance) |
+| `Espace` | Sauter ; ressauter dès l'atterrissage (ou garder Espace enfoncé) = *bunny hop*, l'élan augmente jusqu'à +60 % |
 | Clic gauche / `F` | Ramasser |
 | `E` | Interagir : trier, prendre un seau, verser dans la machine, charger la scierie |
 | `Tab` | Menu de construction |
@@ -103,7 +127,7 @@ Les outils (râteau, pinces, sac…) se débloquent à la table après **100 obj
 ## Structure
 
 ```
-project.godot          configuration (scène de départ : menu.tscn, autoload Settings)
+project.godot          configuration (scène de départ : menu.tscn, autoloads Settings et Music)
 menu.tscn              menu principal
 main.tscn              la partie (le monde est construit par scripts/main.gd)
 scripts/
@@ -113,15 +137,20 @@ scripts/
   buckets.gd           les seaux de produits devant la table
   sawmill.gd           la scierie (bûches → planches)
   chalet.gd            le chalet et ses meubles
+  nature.gd            matières du décor : sol, chemins, boue, feuillage, herbe au vent, eau, buissons
   game_data.gd         constantes : nombre d'objets, catégories, outils, chantiers
   settings.gd          options du joueur (autoload), touches, audio, affichage
-  save_game.gd         lecture / écriture du fichier de sauvegarde
+  save_game.gd         sauvegardes (une par partie) et leur résumé
+  load_menu.gd         fenêtre « Charger une partie »
+  music.gd             musique du menu et playlist du jeu (autoload)
   menu.gd              menu principal
   pause_menu.gd        menu pause
   options_menu.gd      fenêtre d'options
   ui_theme.gd          style commun des menus
   player.gd, helper.gd, sort_ui.gd, minimap.gd, models.gd, sfx.gd
 assets/models/         modèles 3D et textures (voir assets/models/LISEZMOI.txt)
+assets/textures/       textures du chalet et des meubles (voir CREDITS.txt)
+assets/music/          musiques (voir CREDITS.txt)
 export_presets.cfg     préréglage d'export Windows
 .github/workflows/     compilation automatique sur GitHub
 ```
@@ -131,3 +160,12 @@ export_presets.cfg     préréglage d'export Windows
 Le workflow `.github/workflows/build-windows.yml` compile le jeu pour Windows sur les serveurs GitHub :
 - à la main : onglet **Actions**, puis **Build Windows**, puis **Run workflow** (le zip apparaît dans *Artifacts*) ;
 - automatiquement : quand tu publies un tag `v...` (par ex. `v0.8.0`), le zip est ajouté à la Release.
+
+## Crédits
+
+Tous ces fichiers sont sous licence **CC0** (domaine public). Merci à leurs auteurs !
+
+- **Musiques** : *Chill lofi inspired* par omfgdude ; *Relaxing Instrumentals* par Holizna (OpenGameArt).
+  Détails : `assets/music/CREDITS.txt`.
+- **Textures du chalet et du décor** (herbe, chemins, boue, feuillage) : [ambientCG](https://ambientcg.com). Détails : `assets/textures/CREDITS.txt`.
+- **Arbres, rochers, champignons** : voir `assets/models/LISEZMOI.txt`.

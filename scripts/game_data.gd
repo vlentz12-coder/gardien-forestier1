@@ -52,7 +52,9 @@ const BUILDINGS := [
     {"key": "scierie", "name": "Scierie", "desc": "Charge-y tes bûches (E) : 1 bûche → 2 planches. Bois trié : +1 ressource", "cost": {1: 12, 5: 5}, "foot": 1.9},
 ]
 
-# Chantiers : posés où l'on veut (le pont, lui, se pose forcément sur le ruisseau)
+# Chantiers : posés où l'on veut (le pont, lui, se pose forcément sur le ruisseau).
+# "tier" : palier de déblocage (voir TIER_UNLOCK), 1 par défaut. "res" dans un coût : ressources 🌿.
+const TIER_UNLOCK := {1: 0, 2: 900, 3: 1800}   # objets ramassés nécessaires pour chaque palier
 const PROJECTS := [
     {"key": "chemin", "name": "Chemin de pierres", "desc": "Vitesse +10 %", "cost": {5: 20}, "foot": 3.0},
     {"key": "nichoir", "name": "Nichoir", "desc": "Les oiseaux reviennent plus tôt", "cost": {1: 10}, "foot": 0.8},
@@ -62,6 +64,25 @@ const PROJECTS := [
     {"key": "mangeoire", "name": "Mangeoire", "desc": "Attire les animaux, débloque les écureuils", "cost": {4: 15}, "foot": 0.8},
     {"key": "serre", "name": "Serre", "desc": "Replante de jeunes arbres autour d'elle", "cost": {1: 15, 2: 10}, "foot": 1.8},
     {"key": "arbre", "name": "Arbre ancien", "desc": "Un arbre majestueux revit", "cost": {2: 25, 0: 15}, "foot": 1.6},
+    # Palier 2
+    {"key": "puits", "name": "Puits", "desc": "L'endurance se recharge 50 % plus vite", "cost": {5: 40, 1: 30}, "foot": 1.3, "tier": 2},
+    {"key": "potager", "name": "Potager", "desc": "Graines triées : +1 🌿", "cost": {2: 70, 0: 50, "planches": 16}, "foot": 2.2, "tier": 2},
+    {"key": "ruches", "name": "Ruches", "desc": "Les abeilles reviennent : les fleurs repoussent bien plus tôt", "cost": {4: 70, "planches": 20}, "foot": 1.5, "tier": 2},
+    {"key": "etang", "name": "Étang et ponton", "desc": "Champignons triés : +1 🌿", "cost": {5: 40, 4: 80, "planches": 24}, "foot": 3.2, "tier": 2},
+    # Palier 3
+    {"key": "cabane", "name": "Cabane perchée", "desc": "Endurance maximale +50 %", "cost": {1: 60, 3: 60, "planches": 70, "res": 150}, "foot": 2.4, "tier": 3},
+    {"key": "kiosque", "name": "Kiosque", "desc": "Écureuils et hérissons travaillent 40 % plus vite", "cost": {5: 50, 3: 80, "planches": 60, "res": 150}, "foot": 2.6, "tier": 3},
+    {"key": "observatoire", "name": "Observatoire", "desc": "Balise les objets restants dès qu'il en reste 600", "cost": {5: 60, 3: 120, 0: 60, "planches": 40, "res": 200}, "foot": 1.8, "tier": 3},
+    {"key": "monument", "name": "Monument du gardien", "desc": "Le chef-d'œuvre final : la forêt te remercie", "cost": {0: 120, 2: 150, 3: 100, 4: 250, 5: 50, "planches": 60, "res": 500}, "foot": 2.0, "tier": 3},
+]
+
+# Améliorations des constructions essentielles (menu Tab, onglet Essentiel).
+# "min" : objets ramassés nécessaires. Les deux dernières automatisent le travail en fin de partie.
+const BUILD_UPGRADES := [
+    {"key": "scierie", "level": 2, "name": "Scierie niveau 2", "desc": "3 planches par bûche, découpe 2× plus rapide", "cost": {1: 40, 5: 15}, "min": 0},
+    {"key": "scierie", "level": 3, "name": "Scierie niveau 3", "desc": "4 planches par bûche", "cost": {1: 80, 3: 40, "res": 150}, "min": 1200},
+    {"key": "machine", "level": 2, "name": "Convoyeur", "desc": "Les seaux partent tout seuls vers la machine (toutes les 5 s)", "cost": {3: 60, 5: 25, "planches": 20, "res": 300}, "min": 1200},
+    {"key": "table", "level": 2, "name": "Trieuse automatique", "desc": "La table trie toute seule ce que tu y déposes (3 objets/s)", "cost": {3: 80, 1: 30, "planches": 40, "res": 400}, "min": 1500},
 ]
 
 # Position des constructions dans les sauvegardes d'avant le menu Tab (elles étaient fixes)
@@ -87,9 +108,15 @@ const FURNITURE := [
     {"key": "plante", "name": "Plante en pot", "cost": {2: 3, 0: 2}},
 ]
 
-## Nom d'une ressource de coût : index de catégorie ou "planches".
+## Nom d'une ressource de coût : index de catégorie, "planches" ou "res" (🌿).
 static func res_name(k) -> String:
-    return "Planches" if k is String else String(CATS[k]["use"])
+    if k is String:
+        return "🌿" if k == "res" else "Planches"
+    return String(CATS[k]["use"])
+
+## Planches produites par bûche selon le niveau de la scierie.
+static func planks_per_log(level: int) -> int:
+    return [2, 2, 3, 4][clampi(level, 0, 3)]
 
 # Tas de feuilles des hérissons
 const PILES := [Vector3(-7, 0, 6), Vector3(7, 0, 6), Vector3(-7, 0, -6), Vector3(7, 0, -6)]

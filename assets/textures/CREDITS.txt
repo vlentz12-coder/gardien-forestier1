@@ -1,0 +1,19 @@
+TEXTURES DU CHALET - ambientCG (https://ambientcg.com), licence CC0 (domaine public)
+====================================================================================
+
+  plancher_*  - WoodFloor041      https://ambientcg.com/view?id=WoodFloor041
+  murs_*      - Planks023A        https://ambientcg.com/view?id=Planks023A
+  meubles_*   - Planks037A        https://ambientcg.com/view?id=Planks037A
+  toit_*      - RoofingTiles013A  https://ambientcg.com/view?id=RoofingTiles013A
+  pierre_*    - Bricks100 (passée en niveaux de gris pour être teintée)  https://ambientcg.com/view?id=Bricks100
+  tissu_*     - Fabric085 (passée en niveaux de gris pour être teintée)  https://ambientcg.com/view?id=Fabric085
+  drap_*      - Fabric081C        https://ambientcg.com/view?id=Fabric081C
+
+DÉCOR EXTÉRIEUR
+  herbe_*     - Grass004          https://ambientcg.com/view?id=Grass004
+  chemin_*    - Ground030         https://ambientcg.com/view?id=Ground030
+  terre_*     - Ground086 (boue, terre du potager)  https://ambientcg.com/view?id=Ground086
+  feuillage.png - composée à partir des feuilles de LeafSet009 (https://ambientcg.com/view?id=LeafSet009)
+
+Pour chaque matière : _couleur (Color), _normal (NormalGL), _rugosite (Roughness), en 1K.
+Import : compression VRAM + mipmaps (sinon les textures scintillent et paraissent pixelisées de loin).

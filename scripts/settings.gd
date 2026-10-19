@@ -15,6 +15,7 @@ const ACTIONS := [
 	["move_left", "Aller à gauche", KEY_A],
 	["move_right", "Aller à droite", KEY_D],
 	["sprint", "Sprinter", KEY_SHIFT],
+	["jump", "Sauter", KEY_SPACE],
 	["pick", "Ramasser", KEY_F],
 	["interact", "Interagir / trier", KEY_E],
 	["recall", "Retour au camp", KEY_R],
@@ -30,11 +31,11 @@ const ACTIONS := [
 const DEFAULTS := {
 	"graphics": {
 		"window_mode": 0, "resolution": 0, "vsync": true, "max_fps": 0,
-		"render_scale": 1.0, "msaa": 0, "fxaa": false, "shadows": 2,
+		"render_scale": 1.0, "msaa": 2, "fxaa": false, "shadows": 2,
 		"ssao": true, "glow": true, "fog": true, "grass": 1.0,
 		"view_distance": 1.0, "fov": 75.0, "brightness": 1.0, "show_fps": false,
 	},
-	"audio": {"master": 0.8, "sfx": 1.0, "ambient": 1.0, "mute": false},
+	"audio": {"master": 0.8, "music": 0.6, "sfx": 1.0, "ambient": 1.0, "mute": false},
 	"controls": {"sensitivity": 1.0, "invert_y": false},
 	"game": {"autosave": true, "minimap": true, "ui_scale": 1.0},
 }
@@ -55,6 +56,7 @@ func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	_ensure_bus("Effets")
 	_ensure_bus("Ambiance")
+	_ensure_bus("Musique")
 	data = DEFAULTS.duplicate(true)
 	for a in ACTIONS:
 		keys[a[0]] = a[2]
@@ -117,6 +119,9 @@ func _load() -> void:
 	# Réglages d'avant le menu de construction : Tab servait à la caméra « bords d'écran »
 	if not cf.has_section_key("keys", "build_menu") and keys["edge_mode"] == KEY_TAB:
 		keys["edge_mode"] = KEY_C
+	# Réglages d'avant la 0.8 : l'anticrénelage était coupé par défaut, on passe une fois en MSAA 4×
+	if not cf.has_section_key("audio", "music") and int(data["graphics"]["msaa"]) == 0:
+		data["graphics"]["msaa"] = 2
 
 # ---------- Touches ----------
 func _apply_keys() -> void:
@@ -198,6 +203,7 @@ func _apply_audio() -> void:
 	_bus_volume("Master", float(a["master"]))
 	_bus_volume("Effets", float(a["sfx"]))
 	_bus_volume("Ambiance", float(a["ambient"]))
+	_bus_volume("Musique", float(a["music"]))
 	if bool(a["mute"]):
 		AudioServer.set_bus_mute(0, true)
 

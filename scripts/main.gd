@@ -3,6 +3,8 @@ extends Node3D
 
 var rng := RandomNumberGenerator.new()
 var world_seed := 0          # graine de génération du monde (sauvegardée : même forêt au chargement)
+var started_at := 0.0         # début de la partie (heure Unix, 0 : inconnue pour les très vieilles sauvegardes)
+var play_time := 0.0          # temps de jeu en secondes (hors pause)
 var collected := 0           # objets ramassés (par le joueur et les écureuils)
 var sun: DirectionalLight3D
 var pause_menu: PauseMenu
@@ -27,6 +29,10 @@ var sawmill: Sawmill
 var chalet: Chalet
 var planks := 0                      # planches sorties de la scierie
 var furniture := {}                  # meubles du chalet construits : clé → true
+var blv := {"scierie": 1, "machine": 1, "table": 1}   # niveaux des constructions essentielles
+var helper_speed := 1.0              # vitesse des écureuils et hérissons (kiosque : ×1,4)
+var _auto_t := 0.0
+var _conv_t := 0.0
 var build_menu: BuildMenu
 var menu_frame := -1
 var ghost: Node3D                    # fantôme de la construction en cours de placement
@@ -59,6 +65,7 @@ var mode := "play"           # "play" | "sort" | "menu" (construction) | "place"
 var env: Environment
 var ground_mat: StandardMaterial3D
 var foliage_mat: StandardMaterial3D
+var water_mat: StandardMaterial3D
 var flowers: Array = []
 var sfx := {}
 var msg_id := 0
@@ -82,9 +89,12 @@ var hud_prompt: Label
 var hud_dbg: Label
 
 func _ready() -> void:
-	var save: Dictionary = SaveGame.read() if SaveGame.load_requested else {}
+	var save: Dictionary = SaveGame.read(SaveGame.slot) if SaveGame.load_requested else {}
 	SaveGame.load_requested = false
 	world_seed = int(save.get("seed", randi()))
+	started_at = float(save.get("started_at", 0.0 if not save.is_empty() else Time.get_unix_time_from_system()))
+	play_time = float(save.get("play_time", 0.0))
+	Music.play_game()
 	rng.seed = world_seed
 	_view_mult = float(Settings.data["graphics"]["view_distance"])
 	for p in GameData.PROJECTS:
@@ -102,6 +112,7 @@ func _ready() -> void:
 	add_child(build_menu)
 	build_menu.place.connect(start_placing)
 	build_menu.furnish.connect(build_furniture)
+	build_menu.upgrade.connect(upgrade_building)
 	build_menu.closed.connect(_close_build_menu)
 	ghost_mat = StandardMaterial3D.new()
 	ghost_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
@@ -194,12 +205,17 @@ func _build_world(spawn_items: bool) -> void:
 	var plane := PlaneMesh.new()
 	plane.size = Vector2(GameData.AREA * 2.0 + 120.0, GameData.AREA * 2.0 + 120.0)
 	var ground := _mesh(plane, Color.WHITE)
-	ground_mat = ground.material_override
+	ground_mat = Nature.ground("herbe", 3.5)
+	ground_mat.roughness_texture = null
+	ground_mat.roughness = 1.0
+	ground.material_override = ground_mat
 	add_child(ground)
-	_box(Vector3(2.6, 0.04, GameData.AREA * 2.0 + 30.0), Color(0.25, 0.55, 0.8), Vector3(10.3, 0.02, 0.0))   # ruisseau
+	var stream := _box(Vector3(2.6, 0.04, GameData.AREA * 2.0 + 30.0), Color.WHITE, Vector3(10.3, 0.02, 0.0))   # ruisseau
+	water_mat = Nature.water()
+	stream.material_override = water_mat
 
 	# La table de tri, la machine et les chantiers sont posés par le joueur (menu Tab, voir plus bas)
-	foliage_mat = StandardMaterial3D.new()
+	foliage_mat = Nature.foliage()
 	_trunk_mat = StandardMaterial3D.new()
 	_trunk_mat.albedo_color = Color(0.35, 0.24, 0.13)
 	_build_path()
@@ -378,6 +394,10 @@ func _say(t: String) -> void:
 		hud_msg.text = ""
 
 func _process(delta: float) -> void:
+	play_time += delta
+	water_mat.uv1_offset += Vector3(0.0, 0.0, delta * 0.12)   # le ruisseau coule
+	_apply_effects()
+	_automation(delta)
 	recall_cd = maxf(0.0, recall_cd - delta)
 	var zn: String = _zone_name(Vector2(player.position.x, player.position.z))
 	if zn != cur_zone:
@@ -519,8 +539,13 @@ func try_open_sort() -> void:
 		if auto > 0:
 			_refresh_buckets()
 	table.append_array(bag)
+	var dropped := bag.size()
 	bag.clear()
 	_update_hud()
+	if int(blv["table"]) >= 2 and not table.is_empty():
+		_play("plop")
+		_say("⚙ %d objet(s) déposé(s) : la trieuse automatique s'en charge (%d en attente)" % [dropped, table.size()])
+		return
 	if table.is_empty():
 		_say("Rien à trier" if auto == 0 else "Trieuse : %d objets triés automatiquement" % auto)
 		return
@@ -608,8 +633,9 @@ func buy(key: String) -> void:
 # ---------- Restauration visuelle ----------
 func _restore() -> void:
 	var p := _pct()
-	ground_mat.albedo_color = Color(0.48, 0.48, 0.43).lerp(Color(0.31, 0.60, 0.23), p)
-	foliage_mat.albedo_color = Color(0.42, 0.42, 0.35).lerp(Color(0.18, 0.49, 0.2), p)
+	# Forêt abîmée : herbe jaunie et feuillage terne ; elle reverdit avec la restauration
+	ground_mat.albedo_color = Color(0.78, 0.72, 0.55).lerp(Color(0.95, 1.0, 0.88), p)
+	foliage_mat.albedo_color = Color(0.78, 0.68, 0.45).lerp(Color(0.82, 1.0, 0.72), p)
 	var sky := Color(0.6, 0.63, 0.63).lerp(Color(0.56, 0.82, 0.94), p)
 	sky_mat.sky_top_color = Color(0.45, 0.5, 0.52).lerp(Color(0.25, 0.5, 0.85), p)
 	sky_mat.sky_horizon_color = sky
@@ -621,8 +647,9 @@ func _restore() -> void:
 		machine.set_display("Restauration : %d %%" % roundi(p * 100.0))
 	env.fog_density = lerpf(0.02, 0.004, p)
 	var shown := 0
-	if p > 0.25:
-		shown = int((p - 0.25) / 0.75 * flowers.size())
+	var bloom := 0.05 if proj.get("ruches", false) else 0.25   # les ruches font refleurir bien plus tôt
+	if p > bloom:
+		shown = int(clampf((p - bloom) / (1.0 - bloom) * (1.6 if bloom < 0.1 else 1.0), 0.0, 1.0) * flowers.size())
 	for i in flowers.size():
 		flowers[i].visible = i < shown
 	if p >= 0.75 and not animals_spawned:
@@ -797,6 +824,10 @@ func _gain(it) -> void:
 		res += 1
 	elif c == 3 and proj["recyclerie"]:
 		res += 2
+	elif c == 2 and proj["potager"]:
+		res += 1
+	elif c == 4 and proj["etang"]:
+		res += 1
 	sorted += 1
 	bin_fill[c] += 1
 
@@ -878,8 +909,141 @@ func _make_project(key: String) -> Node3D:
 			s.radius = 2.6
 			s.height = 5.0
 			_part(n, s, Color(0.2, 0.55, 0.25), Vector3(0, 5.5, 0))
+		"puits":
+			_tpart(n, _cyl_mesh(0.85, 0.9, 0.8), "pierre", Color(0.9, 0.86, 0.8), Vector3(0, 0.4, 0))
+			var wsurf := _part(n, _cyl_mesh(0.68, 0.68, 0.02), Color.WHITE, Vector3(0, 0.62, 0))
+			wsurf.material_override = water_mat
+			for x in [-0.75, 0.75]:
+				_tpart(n, _box_mesh(Vector3(0.12, 1.5, 0.12)), "meubles", Color.WHITE, Vector3(x, 1.15, 0))
+			var crank := _tpart(n, _cyl_mesh(0.06, 0.06, 1.6), "meubles", Color(0.8, 0.75, 0.7), Vector3(0, 1.6, 0))
+			crank.rotation.z = PI / 2.0
+			var roof := PrismMesh.new()
+			roof.size = Vector3(2.0, 0.6, 1.3)
+			_tpart(n, roof, "toit", Color(0.8, 0.6, 0.5), Vector3(0, 2.2, 0))
+			_part(n, _cyl_mesh(0.14, 0.11, 0.25), Color(0.5, 0.36, 0.22), Vector3(0, 1.1, 0))
+		"potager":
+			for i in 3:
+				var x := -1.1 + i * 1.1
+				_tpart(n, _box_mesh(Vector3(0.85, 0.3, 2.4)), "meubles", Color.WHITE, Vector3(x, 0.15, 0))
+				var soil := _part(n, _box_mesh(Vector3(0.75, 0.04, 2.3)), Color.WHITE, Vector3(x, 0.31, 0))
+				soil.material_override = Nature.ground("terre", 2.0, Color(0.6, 0.45, 0.35))
+				for k in 5:
+					var leaf := SphereMesh.new()
+					leaf.radius = 0.16
+					leaf.height = 0.22
+					var col: Color = [Color(0.3, 0.6, 0.2), Color(0.85, 0.35, 0.15), Color(0.4, 0.7, 0.25)][i]
+					_part(n, leaf, col, Vector3(x, 0.4, -0.9 + k * 0.45))
+		"ruches":
+			for i in 3:
+				var h := Node3D.new()
+				h.position = Vector3(-1.0 + i * 1.0, 0, 0)
+				h.rotation.y = randf_range(-0.2, 0.2)
+				n.add_child(h)
+				_tpart(h, _box_mesh(Vector3(0.6, 0.35, 0.6)), "meubles", Color.WHITE, Vector3(0, 0.18, 0))
+				for k in 3:
+					_part(h, _box_mesh(Vector3(0.55, 0.22, 0.55)), [Color(0.95, 0.85, 0.5), Color(0.98, 0.95, 0.85), Color(0.9, 0.7, 0.35)][(i + k) % 3], Vector3(0, 0.47 + k * 0.23, 0))
+				var hive_roof := PrismMesh.new()
+				hive_roof.size = Vector3(0.7, 0.25, 0.7)
+				_tpart(h, hive_roof, "toit", Color(0.85, 0.55, 0.45), Vector3(0, 1.26, 0))
+		"etang":
+			var pond := _part(n, _cyl_mesh(2.7, 2.7, 0.04), Color.WHITE, Vector3(0, 0.035, 0))
+			(pond.mesh as CylinderMesh).radial_segments = 36
+			pond.material_override = water_mat
+			for k in 16:
+				var a := k * TAU / 16.0 + randf_range(-0.1, 0.1)
+				var st := SphereMesh.new()
+				st.radius = randf_range(0.25, 0.4)
+				st.height = st.radius * 1.2
+				_tpart(n, st, "pierre", Color(0.8, 0.78, 0.75), Vector3(cos(a) * 2.8, 0.05, sin(a) * 2.8))
+			_tpart(n, _box_mesh(Vector3(0.9, 0.08, 2.6)), "plancher", Color.WHITE, Vector3(0, 0.32, 2.2))   # ponton
+			for z in [1.2, 2.2, 3.2]:
+				for x in [-0.4, 0.4]:
+					_tpart(n, _cyl_mesh(0.05, 0.05, 0.45), "meubles", Color.WHITE, Vector3(x, 0.15, z))
+			for k in 10:
+				var a := randf_range(-1.2, 1.2) + PI
+				_part(n, _cyl_mesh(0.015, 0.02, randf_range(0.6, 1.1)), Color(0.35, 0.55, 0.2), Vector3(cos(a) * 2.5, 0.4, sin(a) * 2.5))
+		"cabane":
+			var trunk := _part(n, _cyl_mesh(0.35, 0.45, 7.0), Color.WHITE, Vector3(0, 3.5, 0))
+			trunk.material_override = Nature.bark(7.0)
+			var crown := Nature.bush(rng, foliage_mat)
+			crown.scale = Vector3.ONE * 1.8
+			crown.position = Vector3(0, 6.2, 0)
+			n.add_child(crown)
+			_tpart(n, _box_mesh(Vector3(3.2, 0.12, 3.2)), "plancher", Color.WHITE, Vector3(0, 3.0, 0))
+			for x in [-1.5, 1.5]:
+				for z in [-1.5, 1.5]:
+					_tpart(n, _box_mesh(Vector3(0.14, 3.0, 0.14)), "meubles", Color.WHITE, Vector3(x, 1.5, z))
+			_tpart(n, _box_mesh(Vector3(2.0, 1.5, 1.8)), "murs", Color(1.0, 0.92, 0.82), Vector3(0.4, 3.8, -0.4))
+			var croof := PrismMesh.new()
+			croof.size = Vector3(2.4, 0.8, 2.2)
+			_tpart(n, croof, "toit", Color(0.8, 0.6, 0.5), Vector3(0.4, 4.95, -0.4))
+			for x in [-0.25, 0.25]:   # échelle
+				_tpart(n, _box_mesh(Vector3(0.06, 3.2, 0.06)), "meubles", Color.WHITE, Vector3(x - 0.6, 1.55, 1.75))
+			for k in 8:
+				_tpart(n, _box_mesh(Vector3(0.56, 0.05, 0.05)), "meubles", Color.WHITE, Vector3(-0.6, 0.3 + k * 0.37, 1.75))
+		"kiosque":
+			var base := _tpart(n, _cyl_mesh(2.4, 2.5, 0.3), "plancher", Color.WHITE, Vector3(0, 0.15, 0))
+			(base.mesh as CylinderMesh).radial_segments = 8
+			for k in 8:
+				var a := k * TAU / 8.0
+				_tpart(n, _cyl_mesh(0.07, 0.07, 2.4), "meubles", Color(1.0, 0.95, 0.9), Vector3(cos(a) * 2.2, 1.5, sin(a) * 2.2))
+			var kroof := _tpart(n, _cyl_mesh(0.1, 2.8, 1.2), "toit", Color(0.55, 0.75, 0.6), Vector3(0, 3.3, 0))
+			(kroof.mesh as CylinderMesh).radial_segments = 8
+			var knob := _part(n, SphereMesh.new(), Color(0.95, 0.8, 0.3), Vector3(0, 4.0, 0))
+			knob.scale = Vector3.ONE * 0.3
+		"observatoire":
+			_tpart(n, _cyl_mesh(1.1, 1.3, 4.5), "pierre", Color(0.9, 0.88, 0.85), Vector3(0, 2.25, 0))
+			var dome := SphereMesh.new()
+			dome.radius = 1.25
+			dome.height = 2.5
+			dome.is_hemisphere = true
+			_part(n, dome, Color(0.75, 0.78, 0.82), Vector3(0, 4.5, 0))
+			var tube := _part(n, _cyl_mesh(0.18, 0.24, 1.6), Color(0.25, 0.3, 0.4), Vector3(0.5, 5.3, 0))
+			tube.rotation.z = -0.8
+			_tpart(n, _box_mesh(Vector3(0.9, 1.6, 0.1)), "meubles", Color(0.7, 0.6, 0.5), Vector3(0, 0.8, 1.27))   # porte
+		"monument":
+			_tpart(n, _box_mesh(Vector3(2.4, 0.4, 2.4)), "pierre", Color(0.92, 0.9, 0.86), Vector3(0, 0.2, 0))
+			_tpart(n, _box_mesh(Vector3(1.6, 1.4, 1.6)), "pierre", Color(0.92, 0.9, 0.86), Vector3(0, 1.1, 0))
+			var nut := SphereMesh.new()
+			nut.radius = 0.7
+			nut.height = 1.7
+			var acorn := _part(n, nut, Color(0.8, 0.6, 0.25), Vector3(0, 2.55, 0))
+			var am := acorn.material_override as StandardMaterial3D
+			am.metallic = 0.7
+			am.roughness = 0.3
+			am.emission_enabled = true
+			am.emission = Color(0.9, 0.65, 0.2)
+			am.emission_energy_multiplier = 0.4
+			var capm := SphereMesh.new()
+			capm.radius = 0.78
+			capm.height = 0.9
+			capm.is_hemisphere = true
+			_part(n, capm, Color(0.45, 0.32, 0.18), Vector3(0, 3.05, 0))
+			_part(n, _cyl_mesh(0.05, 0.08, 0.35), Color(0.45, 0.32, 0.18), Vector3(0, 3.6, 0))
+			var plaque := Label3D.new()
+			plaque.text = "Au gardien de la forêt\nMerci"
+			plaque.font_size = 64
+			plaque.pixel_size = 0.005
+			plaque.outline_size = 8
+			plaque.modulate = Color(1.0, 0.9, 0.6)
+			plaque.position = Vector3(0, 1.2, 0.81)
+			n.add_child(plaque)
+			var glow := OmniLight3D.new()
+			glow.light_color = Color(1.0, 0.8, 0.45)
+			glow.light_energy = 0.8
+			glow.omni_range = 6.0
+			glow.position = Vector3(0, 3.0, 0)
+			n.add_child(glow)
 	return n
 
+## Pièce texturée (mêmes matières que le chalet : "meubles", "murs", "plancher", "toit", "pierre"...).
+func _tpart(parent: Node, m: Mesh, kind: String, tint: Color, pos: Vector3) -> MeshInstance3D:
+	var mi := MeshInstance3D.new()
+	mi.mesh = m
+	mi.material_override = Chalet._material(kind, tint)
+	mi.position = pos
+	parent.add_child(mi)
+	return mi
 func _part(parent: Node, m: Mesh, color: Color, pos: Vector3) -> MeshInstance3D:
 	var mi := _mesh(m, color)
 	mi.position = pos
@@ -985,7 +1149,7 @@ func helper_drop(item, pos: Vector3) -> void:
 	item.set_meta("busy", false)
 
 func _update_beacons() -> void:
-	if up["drone"] and items.size() <= 120:
+	if (up["drone"] and items.size() <= 120) or (proj.get("observatoire", false) and items.size() <= 600):
 		for o in items:
 			if not beacons.has(o):
 				var m := CylinderMesh.new()
@@ -1007,32 +1171,26 @@ func _update_beacons() -> void:
 
 # ---------- Herbe qui pousse avec la restauration ----------
 func _build_grass() -> void:
-	var blade := CylinderMesh.new()
-	blade.top_radius = 0.0
-	blade.bottom_radius = 0.05
-	blade.height = 0.35
-	blade.radial_segments = 4
-	blade.rings = 1
 	grass_mm = MultiMesh.new()
 	grass_mm.transform_format = MultiMesh.TRANSFORM_3D
-	grass_mm.mesh = blade
+	grass_mm.mesh = Nature.grass_tuft()
 	grass_mm.instance_count = GRASS_COUNT
 	for i in GRASS_COUNT:
 		var pos := Vector3.ZERO
 		while true:
-			pos = Vector3(rng.randf_range(-GameData.AREA, GameData.AREA), 0.17, rng.randf_range(-GameData.AREA, GameData.AREA))
+			pos = Vector3(rng.randf_range(-GameData.AREA, GameData.AREA), 0.0, rng.randf_range(-GameData.AREA, GameData.AREA))
 			if Vector2(pos.x, pos.z).length() > 3.0 and (pos.x < 8.8 or pos.x > 11.8) and _path_dist(Vector2(pos.x, pos.z)) > 1.6:
 				break
-		var s := Vector3(rng.randf_range(0.8, 1.6), rng.randf_range(0.7, 1.7), rng.randf_range(0.8, 1.6))
-		grass_mm.set_instance_transform(i, Transform3D(Basis.from_scale(s), pos))
+		# Touffes basses (18 à 34 cm) : les feuilles à ramasser restent visibles
+		var h := rng.randf_range(0.18, 0.34)
+		var b := Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3(h * rng.randf_range(0.9, 1.4), h, h * rng.randf_range(0.9, 1.4)))
+		grass_mm.set_instance_transform(i, Transform3D(b, pos))
 	grass_mm.visible_instance_count = 0
 	var mi := MultiMeshInstance3D.new()
 	mi.multimesh = grass_mm
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color(0.3, 0.65, 0.22)
-	mi.material_override = mat
+	mi.material_override = Nature.grass_material()
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(mi)
-
 var _leaf_tex_checked := false
 var _leaf_tex: Texture2D = null
 
@@ -1146,7 +1304,7 @@ func _build_path() -> void:
 	disc.top_radius = 1.3
 	disc.bottom_radius = 1.3
 	disc.height = 0.05
-	disc.radial_segments = 8
+	disc.radial_segments = 20
 	disc.rings = 1
 	var mm := MultiMesh.new()
 	mm.transform_format = MultiMesh.TRANSFORM_3D
@@ -1157,12 +1315,13 @@ func _build_path() -> void:
 		mm.set_instance_transform(i, Transform3D(b, Vector3(pts[i].x, 0.025, pts[i].y)))
 	var mi := MultiMeshInstance3D.new()
 	mi.multimesh = mm
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color(0.5, 0.38, 0.24)
-	mi.material_override = mat
+	mi.material_override = Nature.ground("chemin", 2.5, Color(0.95, 0.88, 0.78))
 	add_child(mi)
 
 func _build_mud() -> void:
+	var mud_mat := Nature.ground("terre", 3.0, Color(0.5, 0.4, 0.3))
+	mud_mat.roughness_texture = null
+	mud_mat.roughness = 0.7   # boue humide, à peine brillante
 	for zone in GameData.ZONES:
 		if not zone.get("mud", false):
 			continue
@@ -1179,9 +1338,10 @@ func _build_mud() -> void:
 			m.top_radius = r
 			m.bottom_radius = r
 			m.height = 0.04
-			m.radial_segments = 16
+			m.radial_segments = 28
 			m.rings = 1
-			var mi := _mesh(m, Color(0.28, 0.2, 0.12))
+			var mi := _mesh(m, Color.WHITE)
+			mi.material_override = mud_mat
 			mi.position = Vector3(p.x, 0.03, p.y)
 			add_child(mi)
 
@@ -1190,6 +1350,7 @@ func _make_tree(pos: Vector3, collide: bool) -> void:
 	if model != null:
 		model.position = pos
 		model.rotation.y = rng.randf_range(0.0, TAU)
+		_tree_foliage(model)
 		_limit_vis(model, 95.0)
 		add_child(model)
 	else:
@@ -1227,6 +1388,17 @@ func _make_tree(pos: Vector3, collide: bool) -> void:
 		add_child(tree)
 	if collide:
 		_add_static_cylinder(pos, 0.6, 4.0)
+
+## Feuillage des modèles d'arbres : leur texture de feuilles d'origine manque, on met la nôtre (teintée par la restauration).
+func _tree_foliage(model: Node) -> void:
+	for c in model.find_children("*", "MeshInstance3D", true, false):
+		var mi := c as MeshInstance3D
+		for i in mi.mesh.get_surface_count():
+			var sm := mi.get_surface_override_material(i)
+			if sm == null:
+				sm = mi.mesh.surface_get_material(i)
+			if sm != null and sm.resource_name.to_lower().contains("lea"):
+				mi.set_surface_override_material(i, foliage_mat)
 
 func _scatter_trees() -> void:
 	for i in 110:
@@ -1294,7 +1466,8 @@ func _scatter_obstacles() -> void:
 		cyl.top_radius = 0.42
 		cyl.bottom_radius = 0.46
 		cyl.height = log_len
-		var lm := _mesh(cyl, Color(0.4, 0.28, 0.15))
+		var lm := _mesh(cyl, Color.WHITE)
+		lm.material_override = Nature.bark(log_len)
 		lm.rotation.z = PI / 2.0
 		lm.position.y = 0.45
 		holder.add_child(lm)
@@ -1308,16 +1481,9 @@ func _scatter_obstacles() -> void:
 			continue
 		var p: Vector2 = sp
 		obstacles.append({"p": p, "r": 1.8})
-		var holder := Node3D.new()
+		var holder := Nature.bush(rng, foliage_mat)
 		holder.position = Vector3(p.x, 0.0, p.y)
-		for k in 6:
-			var bs := SphereMesh.new()
-			var br: float = rng.randf_range(0.55, 0.95)
-			bs.radius = br
-			bs.height = br * 2.0
-			var bm := _mesh(bs, Color(0.16, 0.34, 0.15).lerp(Color(0.1, 0.22, 0.1), rng.randf()))
-			bm.position = Vector3(rng.randf_range(-1.0, 1.0), br * 0.8, rng.randf_range(-1.0, 1.0))
-			holder.add_child(bm)
+		holder.rotation.y = rng.randf() * TAU
 		_limit_vis(holder, 95.0)
 		add_child(holder)
 		_add_static_cylinder(Vector3(p.x, 0.0, p.y), 1.7, 2.0)
@@ -1606,6 +1772,7 @@ func _spawn_building(key: String, pos: Vector3, yaw: float) -> Node3D:
 			machine.set_display("Restauration : %d %%" % roundi(_pct() * 100.0))
 		"scierie":
 			sawmill = n
+			sawmill.level = int(blv["scierie"])
 			sawmill.produced.connect(_on_planks)
 			sawmill.set_info(planks)
 		"chalet":
@@ -1621,13 +1788,15 @@ func _set_obstacle(key: String, pos: Vector3) -> void:
 
 func _can_pay(cost: Dictionary) -> bool:
 	for k in cost:
-		if (planks if k is String else stock[k]) < int(cost[k]):
+		if _have(k) < int(cost[k]):
 			return false
 	return true
 
 func _pay(cost: Dictionary) -> void:
 	for k in cost:
-		if k is String:
+		if k is String and k == "res":
+			res -= int(cost[k])
+		elif k is String:
 			planks -= int(cost[k])
 		else:
 			stock[k] -= int(cost[k])
@@ -1663,7 +1832,8 @@ func map_marks() -> Array:
 	return out
 
 func _build_state() -> Dictionary:
-	return {"stock": stock, "planks": planks, "placed": placed, "proj": proj, "furniture": furniture}
+	return {"stock": stock, "planks": planks, "res": res, "placed": placed, "proj": proj, "furniture": furniture, "collected": collected, "blv": blv,
+		"next": {"scierie": next_upgrade("scierie"), "machine": next_upgrade("machine"), "table": next_upgrade("table")}}
 
 func open_build_menu() -> void:
 	if mode != "play":
@@ -1687,7 +1857,7 @@ func start_placing(key: String) -> void:
 	var d := _def(key)
 	if d.is_empty():
 		return
-	if not placed.has(key) and not _can_pay(d["cost"]):
+	if not placed.has(key) and (not _can_pay(d["cost"]) or collected < _tier_min(d)):
 		_play("bad")
 		return
 	_close_build_menu()
@@ -1830,9 +2000,9 @@ func _end_place(_ok: bool) -> void:
 func _clear_grass_at(p: Vector3, r: float) -> void:
 	if grass_mm != null:
 		for i in grass_mm.instance_count:
-			var tr := grass_mm.get_instance_transform(i)
-			if Vector2(tr.origin.x - p.x, tr.origin.z - p.z).length() < r:
-				grass_mm.set_instance_transform(i, Transform3D(Basis.from_scale(Vector3.ZERO), tr.origin))
+			var xf := grass_mm.get_instance_transform(i)
+			if Vector2(xf.origin.x - p.x, xf.origin.z - p.z).length() < r:
+				grass_mm.set_instance_transform(i, Transform3D(Basis.from_scale(Vector3.ZERO), xf.origin))
 	for f in flowers:
 		if Vector2(f.position.x - p.x, f.position.z - p.z).length() < r:
 			f.position.y = -1.0
@@ -1848,6 +2018,84 @@ func _clear_items_at(p: Vector3, r: float) -> void:
 			var np := Vector2(p.x, p.z) + dir * (r + 0.4)
 			o.global_position = Vector3(np.x, o.global_position.y, np.y)
 
+# ---------- Progression : paliers, améliorations, automatisation ----------
+func _have(k) -> int:
+	if k is String:
+		return res if k == "res" else planks
+	return stock[k]
+
+## Objets ramassés nécessaires pour débloquer une construction (son palier).
+func _tier_min(d: Dictionary) -> int:
+	return int(GameData.TIER_UNLOCK[int(d.get("tier", 1))])
+
+## Prochaine amélioration d'une construction essentielle ({} s'il n'y en a plus).
+func next_upgrade(key: String) -> Dictionary:
+	for u in GameData.BUILD_UPGRADES:
+		if u["key"] == key and int(u["level"]) == int(blv.get(key, 1)) + 1:
+			return u
+	return {}
+
+func upgrade_building(key: String) -> void:
+	var u := next_upgrade(key)
+	if u.is_empty() or not placed.has(key) or collected < int(u["min"]) or not _can_pay(u["cost"]):
+		_play("bad")
+		return
+	_pay(u["cost"])
+	blv[key] = int(u["level"])
+	if key == "scierie" and sawmill != null:
+		sawmill.level = blv[key]
+		sawmill.set_info(planks)
+	_play("buy")
+	_say("⬆ %s : %s" % [u["name"], u["desc"]])
+	build_menu.refresh(_build_state())
+	_update_hud()
+
+## Effets permanents des chantiers (appelé à chaque image).
+func _apply_effects() -> void:
+	player.regen_mult = 1.5 if proj.get("puits", false) else 1.0
+	player.stamina_max = 150.0 if proj.get("cabane", false) else 100.0
+	hud_stamina.max_value = player.stamina_max
+	helper_speed = 1.4 if proj.get("kiosque", false) else 1.0
+
+## Trieuse automatique (la table trie seule) et convoyeur (les seaux vont seuls à la machine).
+func _automation(delta: float) -> void:
+	if int(blv["table"]) >= 2 and not table.is_empty():
+		_auto_t += delta
+		var changed := false
+		while _auto_t >= 0.33:
+			_auto_t -= 0.33
+			# Premier objet dont le seau n'est pas plein (un seau plein bloque seulement sa catégorie)
+			var idx := -1
+			for i in table.size():
+				if bin_fill[table[i]["cat"]] < _bucket_cap():
+					idx = i
+					break
+			if idx < 0:
+				_auto_t = 0.0
+				break
+			_gain(table.pop_at(idx))
+			changed = true
+		if changed:
+			_refresh_buckets()
+			_update_hud()
+			if mode == "sort":
+				sort_ui.refresh(_ui())
+	else:
+		_auto_t = 0.0
+	if int(blv["machine"]) >= 2 and machine != null:
+		_conv_t += delta
+		if _conv_t >= 5.0:
+			_conv_t = 0.0
+			var total := 0
+			for c in bin_fill.size():
+				if bin_fill[c] > 0:
+					total += bin_fill[c]
+					delivered += bin_fill[c]
+					bin_fill[c] = 0
+					machine.puff(GameData.CATS[c]["color"])
+			if total > 0:
+				_refresh_buckets()
+				_restore()
 # ---------- Scierie et chalet ----------
 func _aim_sawmill() -> bool:
 	return sawmill != null and _aim([sawmill.hopper_point()], 3.5) == 0
@@ -2053,6 +2301,7 @@ func save_data() -> Dictionary:
 	return {
 		"seed": world_seed,
 		"time": Time.get_datetime_dict_from_system(),
+		"started_at": started_at, "saved_at": Time.get_unix_time_from_system(), "play_time": play_time, "restored": _pct(),
 		"items": its,
 		"bag": bag.duplicate(true),
 		"table": tbl,
@@ -2063,7 +2312,7 @@ func save_data() -> Dictionary:
 		"recall_cd": recall_cd,
 		"bin_fill": bin_fill.duplicate(), "carried": carried.duplicate(), "delivered": delivered,
 		"placed": pl, "planks": planks, "furniture": furniture.duplicate(),
-		"sawmill_queue": sawmill.queue if sawmill != null else 0, "tuto": tuto_step,
+		"sawmill_queue": sawmill.queue if sawmill != null else 0, "tuto": tuto_step, "blv": blv.duplicate(),
 	}
 
 func _apply_save(s: Dictionary) -> void:
@@ -2097,11 +2346,14 @@ func _apply_save(s: Dictionary) -> void:
 		stock[i] = int(st[i])
 	planks = int(s.get("planks", 0))
 	furniture = s.get("furniture", {})
+	var sb: Dictionary = s.get("blv", {})
+	for k in sb:
+		blv[k] = int(sb[k])
 	# Constructions posées. Anciennes sauvegardes : tout était à une place fixe, on les y remet.
 	if s.has("placed"):
-		var pl: Dictionary = s["placed"]
-		for k in pl:
-			var a: Array = pl[k]
+		var built: Dictionary = s["placed"]
+		for k in built:
+			var a: Array = built[k]
 			_spawn_building(k, Vector3(float(a[0]), 0.0, float(a[1])), float(a[2]))
 		tuto_step = int(s.get("tuto", TUTO_DONE))
 	else:

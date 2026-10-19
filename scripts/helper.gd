@@ -109,7 +109,7 @@ func _step(delta: float) -> void:
     if flat.length() < 0.25:
         _arrive()
         return
-    global_position += flat.normalized() * speed * delta
+    global_position += flat.normalized() * speed * main.helper_speed * delta
     look_at(Vector3(dest.x, global_position.y, dest.z), Vector3.UP)
     if kind == "hedgehog" and state == "return" and is_instance_valid(target):
         target.global_position = global_position + Vector3(0, 0.22, 0)
