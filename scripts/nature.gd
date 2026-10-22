@@ -168,3 +168,43 @@ static func bush(rng: RandomNumberGenerator, leaf_mat: Material) -> Node3D:
 	mmi.material_override = leaf_mat
 	holder.add_child(mmi)
 	return holder
+
+# ---------- Pelage et plumage des animaux ----------
+static var _fur_cache := {}
+
+## Pelage : bruit fin (poils) dans les teintes de la couleur de base, avec un léger relief.
+static func fur(base: Color, fine := 9.0) -> StandardMaterial3D:
+	var id := "%s|%.1f" % [base.to_html(), fine]
+	if _fur_cache.has(id):
+		return _fur_cache[id]
+	var noise := FastNoiseLite.new()
+	noise.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
+	noise.frequency = 0.09
+	noise.fractal_octaves = 3
+	var grad := Gradient.new()
+	grad.set_color(0, base.darkened(0.4))
+	grad.set_color(1, base.lightened(0.18))
+	var tex := NoiseTexture2D.new()
+	tex.width = 128
+	tex.height = 128
+	tex.seamless = true
+	tex.noise = noise
+	tex.color_ramp = grad
+	var nrm := NoiseTexture2D.new()
+	nrm.width = 128
+	nrm.height = 128
+	nrm.seamless = true
+	nrm.noise = noise
+	nrm.as_normal_map = true
+	nrm.bump_strength = 4.0
+	var m := StandardMaterial3D.new()
+	m.albedo_texture = tex
+	m.normal_enabled = true
+	m.normal_texture = nrm
+	m.normal_scale = 0.7
+	m.roughness = 0.95
+	m.uv1_triplanar = true
+	m.uv1_scale = Vector3.ONE * fine
+	m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+	_fur_cache[id] = m
+	return m

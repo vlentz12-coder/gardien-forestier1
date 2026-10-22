@@ -15,5 +15,7 @@ DÉCOR EXTÉRIEUR
   terre_*     - Ground086 (boue, terre du potager)  https://ambientcg.com/view?id=Ground086
   feuillage.png - composée à partir des feuilles de LeafSet009 (https://ambientcg.com/view?id=LeafSet009)
 
+  objet_*.png - feuilles mortes à ramasser, découpées et recolorées depuis LeafSet010 et LeafSet009
+
 Pour chaque matière : _couleur (Color), _normal (NormalGL), _rugosite (Roughness), en 1K.
 Import : compression VRAM + mipmaps (sinon les textures scintillent et paraissent pixelisées de loin).

@@ -113,12 +113,14 @@ func _tab_controls() -> void:
 		g.add_child(b)
 		key_buttons[action] = b
 	_refresh_keys()
-	_header(g, "Fixes : clic gauche = ramasser · 1-4 / molette = outils · 1-6 = poubelles · Échap = pause")
+	_header(g, "Touches fixes : clic gauche = ramasser · 1-4 / molette = changer d'outil · 1-6 = poubelles (table de tri) · Échap = pause / passer une cinématique")
+	_header(g, "Pendant un placement (menu de construction) : clic = poser · molette = tourner · clic droit ou Échap = annuler")
 
 func _tab_game() -> void:
 	var g := _page("Jeu")
 	_check(g, "Sauvegarde automatique (toutes les 3 min et à la fermeture)", "game", "autosave")
 	_check(g, "Afficher la mini-carte", "game", "minimap")
+	_check(g, "Cinématiques de restauration (1er versement, 25, 50, 75 et 100 %)", "game", "cinematics")
 	_slider(g, "Taille de l'interface", "game", "ui_scale", 0.75, 1.25, 0.05, " %", 100.0)
 
 func _reset_tab() -> void:

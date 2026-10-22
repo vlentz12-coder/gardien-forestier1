@@ -31,7 +31,24 @@ var planks := 0                      # planches sorties de la scierie
 var furniture := {}                  # meubles du chalet construits : clé → true
 var blv := {"scierie": 1, "machine": 1, "table": 1}   # niveaux des constructions essentielles
 var helper_speed := 1.0              # vitesse des écureuils et hérissons (kiosque : ×1,4)
+var animal_names := {}               # noms choisis par le joueur : espèce → [noms, dans l'ordre d'arrivée]
+const NAME_IDEAS := {
+	"squirrel": ["Noisette", "Pépin", "Caramel", "Roussette", "Filou", "Biscotte", "Moka", "Praline"],
+	"hedgehog": ["Choupi", "Piquant", "Bogue", "Pelote", "Châtaigne", "Brindille", "Marron"],
+	"fox": ["Roux", "Flamme", "Malice", "Cannelle", "Goupil"],
+	"deer": ["Brume", "Sylve", "Aurore", "Fougère", "Velours"],
+	"bird": ["Pinson", "Plume", "Cerise", "Azur", "Sifflet", "Mirabelle", "Pistache"],
+}
 var _auto_t := 0.0
+var _name_new_animal := false
+var cine: Cinematic
+var cine_done := {}            # cinématiques déjà vues ("first", "25"…)
+var _cine_queue: Array = []
+var _cine_from_save = null
+var gold := 0                  # glands dorés (monnaie des skins)
+var gold_steps := 0            # paliers de GOLD_STEP objets déjà récompensés
+var skins_owned := {}          # skin → true
+var skins_on := {}             # catégorie → skin équipé
 var _conv_t := 0.0
 var build_menu: BuildMenu
 var menu_frame := -1
@@ -46,9 +63,7 @@ var tuto_step := TUTO_DONE
 var tuto_panel: PanelContainer
 var tuto_title: Label
 var tuto_label: Label
-const MODEL_NAMES := ["feuille", "branche", "pomme_de_pin", "dechet", "champignon", "caillou"]
-const MODEL_SIZES := [0.3, 0.8, 0.2, 0.25, 0.2, 0.25]
-const GRASS_COUNT := 6000
+const GRASS_COUNT := 12000
 var sky_mat: ProceduralSkyMaterial
 var grass_mm: MultiMesh
 var player: Player
@@ -66,6 +81,9 @@ var env: Environment
 var ground_mat: StandardMaterial3D
 var foliage_mat: StandardMaterial3D
 var water_mat: StandardMaterial3D
+var path_mat: StandardMaterial3D
+var bank_mat: StandardMaterial3D
+var grass_shader: ShaderMaterial
 var flowers: Array = []
 var sfx := {}
 var msg_id := 0
@@ -106,13 +124,15 @@ func _ready() -> void:
 	sort_ui = SortUI.new()
 	add_child(sort_ui)
 	sort_ui.bin_chosen.connect(choose_bin)
-	sort_ui.bought.connect(buy)
 	sort_ui.closed.connect(_close_sort)
 	build_menu = BuildMenu.new()
 	add_child(build_menu)
 	build_menu.place.connect(start_placing)
 	build_menu.furnish.connect(build_furniture)
 	build_menu.upgrade.connect(upgrade_building)
+	build_menu.bought.connect(buy)
+	build_menu.rename.connect(rename_animal)
+	build_menu.skin.connect(buy_skin)
 	build_menu.closed.connect(_close_build_menu)
 	ghost_mat = StandardMaterial3D.new()
 	ghost_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
@@ -132,6 +152,10 @@ func _ready() -> void:
 	save_timer.autostart = true
 	save_timer.timeout.connect(func(): if Settings.data["game"]["autosave"]: save_game(true))
 	add_child(save_timer)
+	cine = Cinematic.new()
+	cine.main = self
+	add_child(cine)
+	cine.finished.connect(_end_cinematic)
 	pause_menu = PauseMenu.new()
 	pause_menu.main = self
 	add_child(pause_menu)
@@ -143,10 +167,13 @@ func _ready() -> void:
 		_apply_save(save)
 	_refresh_buckets()
 	_apply_settings()
+	_apply_skins()
 	_refresh_tuto()
 
 # ---------- Entrées (touches définies dans Options > Commandes, voir settings.gd) ----------
 func _input(event: InputEvent) -> void:
+	if mode == "cine":
+		return
 	if mode == "play":
 		_play_input(event)
 		return
@@ -191,6 +218,8 @@ func _build_world(spawn_items: bool) -> void:
 	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
 	env.glow_enabled = true
 	env.ssao_enabled = true
+	env.ssao_radius = 1.2
+	env.ssao_intensity = 2.5   # ombre de contact au pied des objets
 	var we := WorldEnvironment.new()
 	we.environment = env
 	add_child(we)
@@ -200,6 +229,10 @@ func _build_world(spawn_items: bool) -> void:
 	sun.light_color = Color(1.0, 0.94, 0.82)
 	sun.light_energy = 1.1
 	sun.directional_shadow_max_distance = 60.0
+	# Ombres collées aux objets (des valeurs trop fortes décollent l'ombre : les objets semblent flotter)
+	sun.shadow_bias = 0.03
+	sun.shadow_normal_bias = 0.6
+	sun.directional_shadow_blend_splits = true
 	add_child(sun)
 
 	var plane := PlaneMesh.new()
@@ -210,9 +243,15 @@ func _build_world(spawn_items: bool) -> void:
 	ground_mat.roughness = 1.0
 	ground.material_override = ground_mat
 	add_child(ground)
-	var stream := _box(Vector3(2.6, 0.04, GameData.AREA * 2.0 + 30.0), Color.WHITE, Vector3(10.3, 0.02, 0.0))   # ruisseau
+	# Rivière (large) et ses berges de sable
+	var river_len := GameData.AREA * 2.0 + 30.0
+	var stream := _box(Vector3(GameData.STREAM_W, 0.04, river_len), Color.WHITE, Vector3(GameData.STREAM_X, 0.02, 0.0))
 	water_mat = Nature.water()
 	stream.material_override = water_mat
+	bank_mat = Nature.ground("chemin", 2.5, Color(0.92, 0.85, 0.72))
+	for sx in [-1.0, 1.0]:
+		var bank := _box(Vector3(1.2, 0.03, river_len), Color.WHITE, Vector3(GameData.STREAM_X + sx * (GameData.STREAM_W / 2.0 + 0.5), 0.015, 0.0))
+		bank.material_override = bank_mat
 
 	# La table de tri, la machine et les chantiers sont posés par le joueur (menu Tab, voir plus bas)
 	foliage_mat = Nature.foliage()
@@ -227,87 +266,13 @@ func _build_world(spawn_items: bool) -> void:
 	if spawn_items:
 		_spawn_items()
 
-func _make_item(cat: int) -> Node3D:
-	var model := Models.make(MODEL_NAMES[cat], MODEL_SIZES[cat])
-	if model == null and cat == 3:
-		model = Models.make("canette", MODEL_SIZES[cat])   # accepte aussi canette.glb
-	if model != null:
-		return model
-	var col: Color = GameData.CATS[cat]["color"]
-	col = col.lerp(Color.WHITE, rng.randf_range(0.0, 0.2))
-	var mi: MeshInstance3D
-	match cat:
-		0:
-			var leaf_cols := [Color(0.3, 0.62, 0.2), Color(0.62, 0.62, 0.22), Color(0.45, 0.3, 0.15)]   # verte, fanée, brune
-			var tint := [Color(1, 1, 1), Color(1.0, 0.9, 0.5), Color(0.78, 0.52, 0.32)]
-			var ci := rng.randi() % 3
-			var tex: Texture2D = _leaf_texture()
-			if tex != null:
-				# ton "skin" de feuille (assets/models/feuille.png) sur un quad plat
-				var q := QuadMesh.new()
-				q.size = Vector2(0.34, 0.34)
-				mi = MeshInstance3D.new()
-				mi.mesh = q
-				var lm := StandardMaterial3D.new()
-				lm.albedo_texture = tex
-				lm.albedo_color = (tint[ci] as Color).lerp(Color.WHITE, rng.randf_range(0.0, 0.15))
-				lm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
-				lm.alpha_scissor_threshold = 0.5
-				lm.cull_mode = BaseMaterial3D.CULL_DISABLED
-				mi.material_override = lm
-				mi.rotation = Vector3(-PI / 2.0 + rng.randf_range(-0.12, 0.12), 0.0, rng.randf_range(0.0, TAU))
-				mi.position.y = 0.02
-			else:
-				var lc: Color = leaf_cols[ci]
-				lc = lc.lerp(Color.WHITE, rng.randf_range(0.0, 0.12))
-				var m := SphereMesh.new()
-				m.radius = 0.5
-				m.height = 1.0
-				mi = _mesh(m, lc)
-				mi.scale = Vector3(0.28, 0.02, 0.18)
-				mi.position.y = 0.02
-				mi.rotation.x = rng.randf_range(-0.2, 0.2)
-		1:
-			var m := CylinderMesh.new()
-			m.top_radius = 0.035
-			m.bottom_radius = 0.035
-			m.height = 0.7
-			mi = _mesh(m, col)
-			mi.rotation.z = PI / 2.0
-			mi.position.y = 0.04
-		2:
-			var m := CylinderMesh.new()
-			m.top_radius = 0.0
-			m.bottom_radius = 0.08
-			m.height = 0.22
-			mi = _mesh(m, col)
-			mi.position.y = 0.08
-		3:
-			var m := BoxMesh.new()
-			m.size = Vector3(0.16, 0.22, 0.16)
-			mi = _mesh(m, col)
-			mi.position.y = 0.11
-		4:
-			var m := SphereMesh.new()
-			m.radius = 0.09
-			m.height = 0.18
-			mi = _mesh(m, col)
-			mi.position.y = 0.09
-		_:
-			var m := SphereMesh.new()
-			m.radius = 0.12
-			m.height = 0.14
-			mi = _mesh(m, col)
-			mi.scale = Vector3(rng.randf_range(0.8, 1.4), rng.randf_range(0.6, 1.0), rng.randf_range(0.8, 1.3))
-			mi.position.y = 0.07
-	return mi
-
 func _build_player() -> void:
 	player = Player.new()
 	player.position = Vector3(0, 0, 3)
 	add_child(player)
 	player.pick_pressed.connect(try_pick)
 	player.interact_pressed.connect(on_interact)
+	player.view_changed.connect(func() -> void: if hud_bucket != null: _refresh_buckets())
 
 # ---------- HUD ----------
 func _label(parent: Node) -> Label:
@@ -381,8 +346,8 @@ func _update_hud() -> void:
 		st.append("%s %d" % [GameData.CATS[i]["use"], stock[i]])
 	if planks > 0 or placed.has("scierie"):
 		st.append("Planches %d" % planks)
-	hud_info.text = "🎒 Sac : %d / %d  ·  Ramassés : %d / %d\n🌿 Ressources : %d  ·  Table : %d\nRestauration : %d %%\n%s" % [
-		bag.size(), cap, collected, GameData.TOTAL, res, table.size(), roundi(_pct() * 100.0), " · ".join(st)]
+	hud_info.text = "🎒 Sac : %d / %d  ·  Ramassés : %d / %d\n🌿 Ressources : %d  ·  Table : %d  ·  ✨ Glands dorés : %d\nRestauration : %d %%\n%s" % [
+		bag.size(), cap, collected, GameData.TOTAL, res, table.size(), gold, roundi(_pct() * 100.0), " · ".join(st)]
 	hud_bar.value = _pct() * 100.0
 
 func _say(t: String) -> void:
@@ -398,6 +363,9 @@ func _process(delta: float) -> void:
 	water_mat.uv1_offset += Vector3(0.0, 0.0, delta * 0.12)   # le ruisseau coule
 	_apply_effects()
 	_automation(delta)
+	_check_gold()
+	if not _cine_queue.is_empty() and mode == "play" and not cine.playing:
+		_start_cinematic()
 	recall_cd = maxf(0.0, recall_cd - delta)
 	var zn: String = _zone_name(Vector2(player.position.x, player.position.z))
 	if zn != cur_zone:
@@ -459,7 +427,7 @@ func _play(sound: String) -> void:
 # ---------- Ramassage ----------
 func _find_target():
 	var cam := player.cam
-	var origin := cam.global_position
+	var origin := player.aim_origin()
 	var f := -cam.global_transform.basis.z
 	var best = null
 	var bs := 9.0
@@ -508,13 +476,14 @@ func try_pick() -> void:
 		o.queue_free()
 		collected += 1
 	_play("pick")
+	player.play_pick()
 	_check_unlock()
 	_update_hud()
 
 func _check_unlock() -> void:
 	if collected >= GameData.TOOLS_UNLOCK_COUNT and not tools_msg:
 		tools_msg = true
-		_say("🔧 Outils débloqués à la table de tri !")
+		_say("🔧 Outils débloqués : menu %s, onglet Outils" % Settings.key_name("build_menu"))
 
 # ---------- Tri ----------
 func try_open_sort() -> void:
@@ -616,9 +585,11 @@ func buy(key: String) -> void:
 				_show_cart()
 			"squirrel":
 				_spawn_helper("squirrel")
+				_name_new_animal = true
 			"hedgehog":
 				_spawn_helper("hedgehog")
 				_show_piles()
+				_name_new_animal = true
 			"seau":
 				_refresh_buckets()
 		_play("buy")
@@ -627,31 +598,18 @@ func buy(key: String) -> void:
 			if GameData.TOOLS[i]["up"] == key:
 				cur_tool = i
 		_refresh_hotbar()
-	sort_ui.refresh(_ui())
+	if mode == "menu":
+		build_menu.refresh(_build_state())
+		if _name_new_animal:
+			build_menu.focus_last_animal()
+	_name_new_animal = false
 	_update_hud()
 
 # ---------- Restauration visuelle ----------
 func _restore() -> void:
 	var p := _pct()
-	# Forêt abîmée : herbe jaunie et feuillage terne ; elle reverdit avec la restauration
-	ground_mat.albedo_color = Color(0.78, 0.72, 0.55).lerp(Color(0.95, 1.0, 0.88), p)
-	foliage_mat.albedo_color = Color(0.78, 0.68, 0.45).lerp(Color(0.82, 1.0, 0.72), p)
-	var sky := Color(0.6, 0.63, 0.63).lerp(Color(0.56, 0.82, 0.94), p)
-	sky_mat.sky_top_color = Color(0.45, 0.5, 0.52).lerp(Color(0.25, 0.5, 0.85), p)
-	sky_mat.sky_horizon_color = sky
-	sky_mat.ground_horizon_color = sky
-	sky_mat.ground_bottom_color = sky.darkened(0.3)
-	env.fog_light_color = sky
-	_restore_grass()
-	if machine != null:
-		machine.set_display("Restauration : %d %%" % roundi(p * 100.0))
-	env.fog_density = lerpf(0.02, 0.004, p)
-	var shown := 0
-	var bloom := 0.05 if proj.get("ruches", false) else 0.25   # les ruches font refleurir bien plus tôt
-	if p > bloom:
-		shown = int(clampf((p - bloom) / (1.0 - bloom) * (1.6 if bloom < 0.1 else 1.0), 0.0, 1.0) * flowers.size())
-	for i in flowers.size():
-		flowers[i].visible = i < shown
+	if cine == null or not cine.playing:
+		apply_visuals(p)
 	if p >= 0.75 and not animals_spawned:
 		animals_spawned = true
 		for k in ["fox", "fox", "deer", "deer"]:
@@ -659,7 +617,74 @@ func _restore() -> void:
 	if p >= 1.0 and not finished:
 		finished = true
 		_say("🎉 La clairière est entièrement restaurée ! Merci, gardien !")
+	_check_cinematic(p)
 	_update_hud()
+
+## Aspect de la forêt pour un niveau de restauration p (0..1). Les cinématiques l'animent d'un niveau à l'autre.
+func apply_visuals(p: float) -> void:
+	p = clampf(p, 0.0, 1.0)
+	# Forêt abîmée : herbe jaunie et feuillage terne ; elle reverdit avec la restauration
+	# Sol desséché et brun → herbe verte ; feuillage roux et mourant → vert vif
+	ground_mat.albedo_color = Color(0.62, 0.5, 0.33).lerp(Color(0.95, 1.0, 0.88), p)
+	foliage_mat.albedo_color = Color(0.62, 0.42, 0.24).lerp(Color(0.82, 1.0, 0.72), p)
+	if grass_shader != null:
+		grass_shader.set_shader_parameter("base_col", Color(0.32, 0.27, 0.13).lerp(Color(0.13, 0.28, 0.08), p))
+		grass_shader.set_shader_parameter("tip_col", Color(0.68, 0.58, 0.33).lerp(Color(0.5, 0.72, 0.28), p))
+	# Chemins boueux et sombres → chemins clairs et nets ; eau trouble → eau claire
+	if path_mat != null:
+		path_mat.albedo_color = Color(0.5, 0.42, 0.33).lerp(Color(0.98, 0.92, 0.82), p)
+		bank_mat.albedo_color = Color(0.5, 0.42, 0.33).lerp(Color(0.95, 0.88, 0.75), p)
+	if water_mat != null:
+		water_mat.albedo_color = Color(0.32, 0.36, 0.22, 0.92).lerp(Color(0.2, 0.45, 0.62, 0.82), p)
+	var sky := Color(0.6, 0.63, 0.63).lerp(Color(0.56, 0.82, 0.94), p)
+	sky_mat.sky_top_color = Color(0.45, 0.5, 0.52).lerp(Color(0.25, 0.5, 0.85), p)
+	sky_mat.sky_horizon_color = sky
+	sky_mat.ground_horizon_color = sky
+	sky_mat.ground_bottom_color = sky.darkened(0.3)
+	env.fog_light_color = sky
+	_restore_grass(p)
+	if machine != null:
+		machine.set_display("Restauration : %d %%" % roundi(p * 100.0))
+		machine.set_fill(p)
+	env.fog_density = lerpf(0.02, 0.004, p)
+	var shown := 0
+	var bloom := 0.05 if proj.get("ruches", false) else 0.25   # les ruches font refleurir bien plus tôt
+	if p > bloom:
+		shown = int(clampf((p - bloom) / (1.0 - bloom) * (1.6 if bloom < 0.1 else 1.0), 0.0, 1.0) * flowers.size())
+	for i in flowers.size():
+		flowers[i].visible = i < shown
+
+# ---------- Cinématiques de restauration ----------
+const CINE_STEPS := [["first", 0.0001], ["25", 0.25], ["50", 0.5], ["75", 0.75], ["100", 0.999]]
+const CINE_TEXT := {
+	"first": "La machine s'est mise en marche : la forêt commence à revivre !",
+	"25": "La forêt est restaurée à 25 % : l'herbe repousse",
+	"50": "À moitié restaurée : la forêt reprend des couleurs",
+	"75": "75 % : les animaux reviennent dans la forêt",
+	"100": "La forêt est entièrement restaurée. Merci, gardien !",
+}
+
+func _check_cinematic(p: float) -> void:
+	for s in CINE_STEPS:
+		if p >= float(s[1]) and not cine_done.has(s[0]):
+			cine_done[s[0]] = true
+			if not Settings.data["game"]["cinematics"]:
+				continue
+			var from: float = {"first": 0.0, "25": 0.0, "50": 0.25, "75": 0.5, "100": 0.0}[s[0]]
+			_cine_queue.append([s[0], from, p])
+
+func _start_cinematic() -> void:
+	var c: Array = _cine_queue.pop_front()
+	mode = "cine"
+	player.enabled = false
+	hud_prompt.text = ""
+	var center: Vector3 = machine.global_position if machine != null else Vector3.ZERO
+	cine.play(c[0], c[1], c[2], center, CINE_TEXT[c[0]])
+
+func _end_cinematic() -> void:
+	mode = "play"
+	player.enabled = true
+	player.grab()
 
 
 func _show_cart() -> void:
@@ -725,7 +750,7 @@ func _play_input(event: InputEvent) -> void:
 	elif event.is_action_pressed("build_menu"):
 		get_viewport().set_input_as_handled()
 		open_build_menu()
-	elif event is InputEventKey and event.pressed and not event.echo and event.physical_keycode == KEY_F1 and tuto_step < TUTO_DONE:
+	elif event.is_action_pressed("skip_tuto") and tuto_step < TUTO_DONE:
 		tuto_step = TUTO_DONE
 		_refresh_tuto()
 		_say("Tutoriel passé. Le menu de construction reste sur %s." % Settings.key_name("build_menu"))
@@ -846,8 +871,8 @@ func _speed_mult() -> float:
 		if here.distance_to(mp) < float(md["r"]):
 			m *= 0.55   # on s'enlise dans la boue
 			break
-	if px > 9.0 and px < 11.6 and not (placed.has("pont") and absf(player.position.z - (placed["pont"] as Node3D).position.z) < 1.5):
-		m *= 0.5   # on patauge dans le ruisseau
+	if _in_water():
+		m *= 0.3   # on patauge dans la rivière : très lent
 	return m
 
 func _box(size: Vector3, color: Color, pos: Vector3) -> MeshInstance3D:
@@ -875,40 +900,73 @@ func _make_project(key: String) -> Node3D:
 	match key:
 		"chemin":
 			for i in 8:
-				_part(n, _cyl_mesh(0.4, 0.4, 0.05), Color(0.6, 0.6, 0.58), Vector3(rng.randf_range(-0.25, 0.25), 0.03, -3.15 + i * 0.9))
+				var stone := _tpart(n, _cyl_mesh(0.4, 0.42, 0.07), "pierre", Color(0.85, 0.83, 0.8), Vector3(rng.randf_range(-0.25, 0.25), 0.03, -3.15 + i * 0.9))
+				stone.scale = Vector3(rng.randf_range(0.85, 1.1), 1.0, rng.randf_range(0.8, 1.05))
 		"nichoir":
-			_part(n, _cyl_mesh(0.05, 0.05, 1.6), wood, Vector3(0, 0.8, 0))
-			_part(n, _box_mesh(Vector3(0.4, 0.35, 0.35)), Color(0.7, 0.5, 0.3), Vector3(0, 1.75, 0))
-			_part(n, _box_mesh(Vector3(0.5, 0.08, 0.45)), Color(0.7, 0.2, 0.15), Vector3(0, 1.98, 0))
+			_tpart(n, _cyl_mesh(0.05, 0.06, 1.6), "meubles", Color.WHITE, Vector3(0, 0.8, 0))
+			_tpart(n, _box_mesh(Vector3(0.4, 0.35, 0.35)), "murs", Color(1.0, 0.92, 0.82), Vector3(0, 1.75, 0))
+			var nroof := PrismMesh.new()
+			nroof.size = Vector3(0.55, 0.22, 0.46)
+			_tpart(n, nroof, "toit", Color(0.9, 0.5, 0.42), Vector3(0, 2.03, 0))
+			var hole := _part(n, _cyl_mesh(0.06, 0.06, 0.02), Color(0.08, 0.06, 0.05), Vector3(0, 1.8, 0.18))   # trou d'entrée
+			hole.rotation.x = PI / 2.0
 		"pont":
-			_part(n, _box_mesh(Vector3(3.2, 0.12, 2.2)), wood, Vector3(0, 0.1, 0))
-			_part(n, _box_mesh(Vector3(3.2, 0.5, 0.08)), wood, Vector3(0, 0.4, 1.1))
-			_part(n, _box_mesh(Vector3(3.2, 0.5, 0.08)), wood, Vector3(0, 0.4, -1.1))
+			var span := GameData.STREAM_W + 2.6   # le pont enjambe toute la rivière
+			_tpart(n, _box_mesh(Vector3(span, 0.14, 2.2)), "plancher", Color.WHITE, Vector3(0, 0.16, 0))
+			for sz in [-1.1, 1.1]:
+				_tpart(n, _box_mesh(Vector3(span, 0.08, 0.08)), "meubles", Color.WHITE, Vector3(0, 0.9, sz))
+				var k := 0
+				while k * 1.2 <= span:
+					_tpart(n, _box_mesh(Vector3(0.1, 0.8, 0.1)), "meubles", Color.WHITE, Vector3(-span / 2.0 + k * 1.2, 0.5, sz))
+					k += 1
+			for sx in [-1.0, 1.0]:
+				for sz in [-0.8, 0.8]:
+					_tpart(n, _cyl_mesh(0.14, 0.14, 0.8), "meubles", Color(0.8, 0.75, 0.7), Vector3(sx * (GameData.STREAM_W / 2.0 - 0.3), -0.2, sz))
 		"composteur":
-			_part(n, _box_mesh(Vector3(1.1, 0.7, 1.1)), Color(0.25, 0.35, 0.15), Vector3(0, 0.35, 0))
-			_part(n, _box_mesh(Vector3(1.2, 0.1, 1.2)), wood, Vector3(0, 0.75, 0))
+			_tpart(n, _box_mesh(Vector3(1.1, 0.7, 1.1)), "murs", Color(0.75, 0.85, 0.6), Vector3(0, 0.35, 0))
+			_tpart(n, _box_mesh(Vector3(1.2, 0.1, 1.2)), "meubles", Color.WHITE, Vector3(0, 0.75, 0))
+			var heap := _part(n, _cyl_mesh(0.35, 0.5, 0.15), Color.WHITE, Vector3(0, 0.78, 0))
+			heap.material_override = Nature.ground("terre", 1.0, Color(0.55, 0.42, 0.3))   # compost
 		"recyclerie":
 			var cols := [Color(0.2, 0.45, 0.85), Color(0.2, 0.65, 0.3), Color(0.9, 0.8, 0.2)]
 			for i in 3:
-				_part(n, _box_mesh(Vector3(0.7, 0.9, 0.7)), cols[i], Vector3(-0.85 + i * 0.85, 0.45, 0))
+				var bin := _part(n, _box_mesh(Vector3(0.7, 0.9, 0.7)), cols[i], Vector3(-0.85 + i * 0.85, 0.45, 0))
+				(bin.material_override as StandardMaterial3D).roughness = 0.35   # plastique
+				_part(n, _box_mesh(Vector3(0.74, 0.06, 0.74)), (cols[i] as Color).darkened(0.3), Vector3(-0.85 + i * 0.85, 0.93, 0))   # couvercle
 		"mangeoire":
-			_part(n, _cyl_mesh(0.06, 0.06, 1.0), wood, Vector3(0, 0.5, 0))
-			_part(n, _box_mesh(Vector3(0.8, 0.08, 0.5)), wood, Vector3(0, 1.05, 0))
+			_tpart(n, _cyl_mesh(0.06, 0.07, 1.0), "meubles", Color.WHITE, Vector3(0, 0.5, 0))
+			_tpart(n, _box_mesh(Vector3(0.8, 0.08, 0.5)), "plancher", Color.WHITE, Vector3(0, 1.05, 0))
+			for sx in [-0.38, 0.38]:
+				_tpart(n, _box_mesh(Vector3(0.04, 0.08, 0.5)), "meubles", Color.WHITE, Vector3(sx, 1.12, 0))
+			for k in 6:   # graines dans la mangeoire
+				_part(n, _cyl_mesh(0.03, 0.03, 0.03), Color(0.75, 0.6, 0.3), Vector3(randf_range(-0.3, 0.3), 1.1, randf_range(-0.18, 0.18)))
 		"serre":
 			var g := _part(n, _box_mesh(Vector3(2.4, 1.6, 2.0)), Color(0.7, 0.9, 1.0, 0.35), Vector3(0, 0.8, 0))
-			(g.material_override as StandardMaterial3D).transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+			var gm := g.material_override as StandardMaterial3D
+			gm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+			gm.roughness = 0.05
+			gm.metallic_specular = 1.0
+			for sx in [-1.2, 1.2]:   # armature en bois
+				for sz in [-1.0, 1.0]:
+					_tpart(n, _box_mesh(Vector3(0.08, 1.6, 0.08)), "meubles", Color.WHITE, Vector3(sx, 0.8, sz))
+			_tpart(n, _box_mesh(Vector3(2.5, 0.08, 2.1)), "meubles", Color.WHITE, Vector3(0, 1.62, 0))
 			for i in 12:
 				var a := rng.randf_range(0.0, TAU)
-				var r := rng.randf_range(2.6, 4.6)
+				var r := rng.randf_range(1.5, 2.4)   # jeunes arbres autour de la serre, dans son emprise
 				var pos := Vector3(cos(a) * r, 0.0, sin(a) * r)
-				_part(n, _cyl_mesh(0.04, 0.06, 0.6), Color(0.35, 0.24, 0.13), pos + Vector3(0, 0.3, 0))
-				_part(n, _cyl_mesh(0.0, 0.35, 0.8), Color(0.22, 0.6, 0.25), pos + Vector3(0, 0.95, 0))
+				var sap := _part(n, _cyl_mesh(0.04, 0.06, 0.6), Color.WHITE, pos + Vector3(0, 0.3, 0))
+				sap.material_override = Nature.bark(0.6)
+				var crown := Nature.bush(rng, foliage_mat)
+				crown.scale = Vector3.ONE * 0.35
+				crown.position = pos + Vector3(0, 0.55, 0)
+				n.add_child(crown)
 		"arbre":
-			_part(n, _cyl_mesh(0.5, 0.7, 4.0), Color(0.35, 0.24, 0.13), Vector3(0, 2.0, 0))
-			var s := SphereMesh.new()
-			s.radius = 2.6
-			s.height = 5.0
-			_part(n, s, Color(0.2, 0.55, 0.25), Vector3(0, 5.5, 0))
+			var old_trunk := _part(n, _cyl_mesh(0.5, 0.75, 4.4), Color.WHITE, Vector3(0, 2.2, 0))
+			old_trunk.material_override = Nature.bark(4.4)
+			var crown_big := Nature.bush(rng, foliage_mat)   # grande couronne de vraies feuilles
+			crown_big.scale = Vector3.ONE * 2.6
+			crown_big.position = Vector3(0, 4.0, 0)
+			n.add_child(crown_big)
 		"puits":
 			_tpart(n, _cyl_mesh(0.85, 0.9, 0.8), "pierre", Color(0.9, 0.86, 0.8), Vector3(0, 0.4, 0))
 			var wsurf := _part(n, _cyl_mesh(0.68, 0.68, 0.02), Color.WHITE, Vector3(0, 0.62, 0))
@@ -1065,9 +1123,9 @@ func _cyl_mesh(r_top: float, r_bot: float, h: float) -> CylinderMesh:
 ## Table de tri : plateau, 6 bacs avec leur nom, et les seaux de produits devant.
 func _make_table() -> Node3D:
 	var root := Node3D.new()
-	_part(root, _box_mesh(Vector3(3.8, 0.9, 1.1)), Color(0.54, 0.35, 0.17), Vector3(0, 0.45, 0))
+	_tpart(root, _box_mesh(Vector3(3.8, 0.9, 1.1)), "meubles", Color(1.0, 0.92, 0.82), Vector3(0, 0.45, 0))
 	for i in GameData.CATS.size():
-		_part(root, _box_mesh(Vector3(0.5, 0.3, 0.5)), Color(0.62, 0.45, 0.28), Vector3(-1.6 + i * 0.64, 1.05, 0))
+		_tpart(root, _box_mesh(Vector3(0.5, 0.3, 0.5)), "murs", (GameData.CATS[i]["color"] as Color).lerp(Color.WHITE, 0.55), Vector3(-1.6 + i * 0.64, 1.05, 0))   # bac à la couleur de sa catégorie
 		var tag := Label3D.new()
 		tag.text = GameData.CATS[i]["name"]
 		tag.font_size = 48
@@ -1088,13 +1146,19 @@ func _show_piles() -> void:
 	for p in GameData.PILES:
 		_cyl(1.6, 1.6, 0.02, Color(0.4, 0.3, 0.2), Vector3(p.x, 0.012, p.z))
 
-func _spawn_helper(kind: String) -> void:
+func _spawn_helper(kind: String, near := Vector3.INF) -> void:
 	var h := Helper.new()
 	add_child(h)
 	var pos := table_drop_point() + Vector3(rng.randf_range(-1.5, 1.5), 0, rng.randf_range(-0.5, 0.5))
+	if near != Vector3.INF:
+		pos = near + Vector3(rng.randf_range(-3.0, 3.0), 0, rng.randf_range(-3.0, 3.0))
 	if kind == "fox" or kind == "deer":
 		pos = Vector3(rng.randf_range(-GameData.AREA, GameData.AREA), 0, rng.randf_range(-GameData.AREA, GameData.AREA))
 	h.setup(self, kind, pos)
+	# Nom : celui de la sauvegarde s'il existe, sinon une idée au hasard (renommable dans le menu Tab)
+	var same := helpers.filter(func(o): return is_instance_valid(o) and o.kind == kind).size()
+	var known: Array = animal_names.get(kind, [])
+	h.set_pet_name(known[same] if same < known.size() else random_name(kind))
 	helpers.append(h)
 
 # Appelées par les aides (écureuils, hérissons)
@@ -1179,7 +1243,7 @@ func _build_grass() -> void:
 		var pos := Vector3.ZERO
 		while true:
 			pos = Vector3(rng.randf_range(-GameData.AREA, GameData.AREA), 0.0, rng.randf_range(-GameData.AREA, GameData.AREA))
-			if Vector2(pos.x, pos.z).length() > 3.0 and (pos.x < 8.8 or pos.x > 11.8) and _path_dist(Vector2(pos.x, pos.z)) > 1.6:
+			if Vector2(pos.x, pos.z).length() > 3.0 and not _in_stream(pos.x) and _path_dist(Vector2(pos.x, pos.z)) > 1.6:
 				break
 		# Touffes basses (18 à 34 cm) : les feuilles à ramasser restent visibles
 		var h := rng.randf_range(0.18, 0.34)
@@ -1188,22 +1252,10 @@ func _build_grass() -> void:
 	grass_mm.visible_instance_count = 0
 	var mi := MultiMeshInstance3D.new()
 	mi.multimesh = grass_mm
-	mi.material_override = Nature.grass_material()
+	grass_shader = Nature.grass_material()
+	mi.material_override = grass_shader
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(mi)
-var _leaf_tex_checked := false
-var _leaf_tex: Texture2D = null
-
-func _leaf_texture() -> Texture2D:
-	if not _leaf_tex_checked:
-		_leaf_tex_checked = true
-		for n in ["feuille.png", "feuille.webp", "feuille.jpg"]:
-			var path: String = "res://assets/models/" + n
-			if ResourceLoader.exists(path):
-				_leaf_tex = load(path) as Texture2D
-				break
-	return _leaf_tex
-
 
 # ---------- Phase 4 : grande carte, chemins, obstacles, mini-carte ----------
 var _trunk_mat: StandardMaterial3D
@@ -1217,8 +1269,13 @@ var hud_zone: Label
 var hud_recall: Label
 
 func _in_stream(x: float) -> bool:
-	return x > 8.8 and x < 11.8
+	return absf(x - GameData.STREAM_X) < GameData.STREAM_W / 2.0 + 0.8
 
+## Le joueur est-il dans l'eau (et pas sur le pont) ?
+func _in_water() -> bool:
+	if absf(player.position.x - GameData.STREAM_X) > GameData.STREAM_W / 2.0 - 0.2:
+		return false
+	return not (placed.has("pont") and absf(player.position.z - (placed["pont"] as Node3D).position.z) < 1.2)
 func _path_dist(p: Vector2) -> float:
 	var best: float = 1e9
 	for q in path_pts:
@@ -1312,10 +1369,13 @@ func _build_path() -> void:
 	mm.instance_count = pts.size()
 	for i in pts.size():
 		var b := Basis.from_scale(Vector3(rng.randf_range(0.9, 1.25), 1.0, rng.randf_range(0.9, 1.25)))
+		if absf(pts[i].x - GameData.STREAM_X) < GameData.STREAM_W / 2.0 + 1.6:
+			b = Basis.from_scale(Vector3.ZERO)   # pas de chemin dessiné dans la rivière (on y patauge)
 		mm.set_instance_transform(i, Transform3D(b, Vector3(pts[i].x, 0.025, pts[i].y)))
 	var mi := MultiMeshInstance3D.new()
 	mi.multimesh = mm
-	mi.material_override = Nature.ground("chemin", 2.5, Color(0.95, 0.88, 0.78))
+	path_mat = Nature.ground("chemin", 2.5, Color(0.95, 0.88, 0.78))
+	mi.material_override = path_mat
 	add_child(mi)
 
 func _build_mud() -> void:
@@ -1326,7 +1386,7 @@ func _build_mud() -> void:
 		if not zone.get("mud", false):
 			continue
 		var c: Vector3 = zone["center"]
-		for i in 9:
+		for i in 14:
 			var ang: float = rng.randf_range(0.0, TAU)
 			var dist: float = rng.randf_range(2.0, float(zone["radius"]) * 0.75)
 			var p := Vector2(c.x, c.z) + Vector2(cos(ang), sin(ang)) * dist
@@ -1348,7 +1408,7 @@ func _build_mud() -> void:
 func _make_tree(pos: Vector3, collide: bool) -> void:
 	var model: Node3D = Models.make("arbre", rng.randf_range(5.0, 8.0))
 	if model != null:
-		model.position = pos
+		model.position = pos - Vector3(0, 0.3, 0)   # racines enfoncées dans le sol
 		model.rotation.y = rng.randf_range(0.0, TAU)
 		_tree_foliage(model)
 		_limit_vis(model, 95.0)
@@ -1401,14 +1461,14 @@ func _tree_foliage(model: Node) -> void:
 				mi.set_surface_override_material(i, foliage_mat)
 
 func _scatter_trees() -> void:
-	for i in 110:
+	for i in 240:
 		var sp = _free_spot(0.8, 16.0, 3.2)
 		if sp == null:
 			continue
 		var p: Vector2 = sp
-		obstacles.append({"p": p, "r": 0.8})
+		obstacles.append({"p": p, "r": 0.8, "shape": {"c": p, "r": 0.45}})   # pose : seul le tronc gêne
 		_make_tree(Vector3(p.x, 0.0, p.y), true)
-	for i in 50:
+	for i in 90:
 		var side: int = rng.randi() % 4
 		var along: float = rng.randf_range(-GameData.AREA - 12.0, GameData.AREA + 12.0)
 		var off: float = rng.randf_range(GameData.AREA + 1.0, GameData.AREA + 12.0)
@@ -1424,19 +1484,19 @@ func _scatter_trees() -> void:
 
 func _scatter_obstacles() -> void:
 	# Rochers (utilisent rocher.glb, sinon caillou.glb agrandi, sinon une forme simple)
-	for i in 45:
+	for i in 95:
 		var rr: float = rng.randf_range(1.0, 2.0)
 		var sp = _free_spot(rr, 9.0, 2.8)
 		if sp == null:
 			continue
 		var p: Vector2 = sp
-		obstacles.append({"p": p, "r": rr})
+		obstacles.append({"p": p, "r": rr, "shape": {"c": p, "r": rr * 0.72}})
 		var model: Node3D = Models.make("rocher", rr * 2.0)
 		if model == null:
 			model = Models.make("caillou", rr * 2.0)
 		if model != null:
-			model.position = Vector3(p.x, 0.0, p.y)
-			model.rotation.y = rng.randf_range(0.0, TAU)
+			model.position = Vector3(p.x, -rr * 0.22, p.y)   # rocher en partie enterré, comme dans la nature
+			model.rotation = Vector3(rng.randf_range(-0.12, 0.12), rng.randf_range(0.0, TAU), rng.randf_range(-0.12, 0.12))
 			_limit_vis(model, 95.0)
 			add_child(model)
 		else:
@@ -1451,14 +1511,14 @@ func _scatter_obstacles() -> void:
 			add_child(mi)
 		_add_static_cylinder(Vector3(p.x, 0.0, p.y), rr * 0.9, 3.0)
 	# Troncs tombés
-	for i in 30:
+	for i in 60:
 		var log_len: float = rng.randf_range(3.5, 6.0)
 		var sp = _free_spot(log_len * 0.5, 9.0, 2.8)
 		if sp == null:
 			continue
 		var p: Vector2 = sp
-		obstacles.append({"p": p, "r": log_len * 0.5})
 		var yaw: float = rng.randf_range(0.0, PI)
+		obstacles.append({"p": p, "r": log_len * 0.5, "shape": {"c": p, "half": Vector2(log_len * 0.5, 0.45), "yaw": yaw}})
 		var holder := Node3D.new()
 		holder.position = Vector3(p.x, 0.0, p.y)
 		holder.rotation.y = yaw
@@ -1469,18 +1529,18 @@ func _scatter_obstacles() -> void:
 		var lm := _mesh(cyl, Color.WHITE)
 		lm.material_override = Nature.bark(log_len)
 		lm.rotation.z = PI / 2.0
-		lm.position.y = 0.45
+		lm.position.y = 0.38   # le tronc repose (un peu enfoncé) sur le sol
 		holder.add_child(lm)
 		_limit_vis(holder, 95.0)
 		add_child(holder)
 		_add_static_box(Vector3(p.x, 0.0, p.y), Vector3(log_len, 1.0, 0.9), yaw)
 	# Fourrés d'épines
-	for i in 30:
+	for i in 65:
 		var sp = _free_spot(1.8, 9.0, 2.8)
 		if sp == null:
 			continue
 		var p: Vector2 = sp
-		obstacles.append({"p": p, "r": 1.8})
+		obstacles.append({"p": p, "r": 1.8, "shape": {"c": p, "r": 1.15}})
 		var holder := Nature.bush(rng, foliage_mat)
 		holder.position = Vector3(p.x, 0.0, p.y)
 		holder.rotation.y = rng.randf() * TAU
@@ -1490,12 +1550,14 @@ func _scatter_obstacles() -> void:
 
 func _build_flowers() -> void:
 	var palette := [Color("ff6b9d"), Color("ffd23f"), Color.WHITE, Color("c77dff")]
-	for i in 400:
+	for i in 850:
 		var fm := SphereMesh.new()
 		fm.radius = 0.09
 		fm.height = 0.18
 		var f := _mesh(fm, palette[i % 4])
 		f.position = Vector3(rng.randf_range(-GameData.AREA + 2.0, GameData.AREA - 2.0), 0.1, rng.randf_range(-GameData.AREA + 2.0, GameData.AREA - 2.0))
+		if _in_stream(f.position.x):
+			f.position.x += GameData.STREAM_W + 2.0
 		f.visible = false
 		_limit_vis(f, 60.0)
 		add_child(f)
@@ -1561,7 +1623,7 @@ func _spawn_items() -> void:
 		_place_item(pos, cat, GameData.CATS[cat]["items"][rng.randi() % 3], rot)
 
 func _place_item(pos: Vector2, cat: int, item_name: String, rot: float) -> void:
-	var o: Node3D = _make_item(cat)
+	var o: Node3D = Items.make(item_name, rng)   # forme et matière selon l'objet (voir items.gd)
 	o.position += Vector3(pos.x, 0.0, pos.y)
 	o.rotation.y = rot
 	o.set_meta("cat", cat)
@@ -1626,6 +1688,7 @@ func _product(c: int) -> String:
 func on_interact() -> void:
 	if mode != "play":
 		return
+	player.play_interact()
 	var rec := _aim_receptacle()
 	if rec >= 0:
 		_pour(rec)
@@ -1641,7 +1704,7 @@ func on_interact() -> void:
 
 ## Index du point visé par la caméra (dans la portée), ou -1.
 func _aim(points: Array, reach: float) -> int:
-	var origin := player.cam.global_position
+	var origin := player.aim_origin()
 	var f := -player.cam.global_transform.basis.z
 	var best := -1
 	var bs := 9.0
@@ -1719,16 +1782,21 @@ func _refresh_buckets() -> void:
 	if carry_node != null:
 		carry_node.queue_free()
 		carry_node = null
+	player.carrying = not carried.is_empty()
 	if carried.is_empty():
 		hud_bucket.text = ""
 		return
 	var c: int = carried["cat"]
 	carry_node = BucketRack.make_bucket(GameData.CATS[c]["color"])
 	BucketRack.set_level(carry_node, float(carried["amount"]) / float(_bucket_cap()))
-	carry_node.position = Vector3(-0.62, -0.55, -1.15)
-	carry_node.rotation = Vector3(0.1, 0.5, 0.0)
-	carry_node.scale = Vector3.ONE * 0.75
-	player.cam.add_child(carry_node)
+	if player.third_person:
+		carry_node.position = Vector3(0, -0.28, 0)   # pendu à la main gauche du gardien
+		carry_node.scale = Vector3.ONE * 0.55
+	else:
+		carry_node.position = Vector3(-0.3, -0.68, -0.68)   # dans la main gauche
+		carry_node.rotation = Vector3(0.1, 0.4, 0.0)
+		carry_node.scale = Vector3.ONE * 0.75
+	player.carry_parent().add_child(carry_node)
 	hud_bucket.text = "🪣 Seau en main : %d × %s → %s" % [carried["amount"], _product(c), GameData.MACHINE_NAME]
 
 
@@ -1761,7 +1829,7 @@ func _spawn_building(key: String, pos: Vector3, yaw: float) -> Node3D:
 	n.rotation.y = yaw
 	add_child(n)
 	placed[key] = n
-	_set_obstacle(key, pos)
+	_set_obstacle(key, pos, yaw)
 	_clear_grass_at(pos, float(d["foot"]))
 	match key:
 		"table":
@@ -1770,6 +1838,7 @@ func _spawn_building(key: String, pos: Vector3, yaw: float) -> Node3D:
 		"machine":
 			machine = n
 			machine.set_display("Restauration : %d %%" % roundi(_pct() * 100.0))
+			machine.set_fill(_pct(), true)
 		"scierie":
 			sawmill = n
 			sawmill.level = int(blv["scierie"])
@@ -1780,11 +1849,67 @@ func _spawn_building(key: String, pos: Vector3, yaw: float) -> Node3D:
 			chalet.set_furniture(furniture)
 		"mangeoire":
 			_spawn_helper("fox")
+		"nichoir":
+			for i in 5:   # les oiseaux reviennent autour du nichoir
+				_spawn_helper("bird", pos)
 	return n
 
-func _set_obstacle(key: String, pos: Vector3) -> void:
+func _set_obstacle(key: String, pos: Vector3, yaw: float = 0.0) -> void:
 	obstacles = obstacles.filter(func(o): return o.get("key", "") != key)
-	obstacles.append({"p": Vector2(pos.x, pos.z), "r": float(_def(key)["foot"]), "key": key})
+	obstacles.append({"p": Vector2(pos.x, pos.z), "r": float(_def(key)["foot"]), "key": key, "shape": _shape_of(key, pos, yaw)})
+
+## Empreinte au sol d'une construction : rectangle tourné ("size") ou cercle ("foot").
+func _shape_of(key: String, pos: Vector3, yaw: float) -> Dictionary:
+	var d := _def(key)
+	var c := Vector2(pos.x, pos.z)
+	if d.has("size"):
+		return {"c": c, "half": (d["size"] as Vector2) / 2.0, "yaw": yaw}
+	return {"c": c, "r": float(d["foot"])}
+
+## Demi-largeur d'une empreinte le long de l'axe x (rivière) et de l'axe z (bords).
+func _extent(s: Dictionary) -> Vector2:
+	if s.has("r"):
+		return Vector2(s["r"], s["r"])
+	var h: Vector2 = s["half"]
+	var cs := absf(cos(float(s["yaw"])))
+	var sn := absf(sin(float(s["yaw"])))
+	return Vector2(cs * h.x + sn * h.y, sn * h.x + cs * h.y)
+
+## Deux empreintes se chevauchent-elles ? (cercles et rectangles tournés, test des axes séparateurs)
+func _shapes_hit(a: Dictionary, b: Dictionary) -> bool:
+	if a.has("r") and b.has("r"):
+		return (a["c"] as Vector2).distance_to(b["c"]) < float(a["r"]) + float(b["r"])
+	if a.has("r"):
+		return _circle_box(a, b)
+	if b.has("r"):
+		return _circle_box(b, a)
+	var axes := _axes(a) + _axes(b)
+	for ax in axes:
+		var pa := _project(a, ax)
+		var pb := _project(b, ax)
+		if pa.y <= pb.x or pb.y <= pa.x:
+			return false
+	return true
+
+func _axes(s: Dictionary) -> Array:
+	var y := float(s["yaw"])
+	return [Vector2(cos(y), -sin(y)), Vector2(sin(y), cos(y))]   # axes x et z locaux, vus de dessus
+
+func _project(s: Dictionary, ax: Vector2) -> Vector2:
+	var ux: Vector2 = _axes(s)[0]
+	var uz: Vector2 = _axes(s)[1]
+	var h: Vector2 = s["half"]
+	var c := (s["c"] as Vector2).dot(ax)
+	var r := absf(ux.dot(ax)) * h.x + absf(uz.dot(ax)) * h.y
+	return Vector2(c - r, c + r)
+
+func _circle_box(circ: Dictionary, box: Dictionary) -> bool:
+	var d: Vector2 = (circ["c"] as Vector2) - (box["c"] as Vector2)
+	var ax := _axes(box)
+	var h: Vector2 = box["half"]
+	var local := Vector2(d.dot(ax[0]), d.dot(ax[1]))
+	var closest := Vector2(clampf(local.x, -h.x, h.x), clampf(local.y, -h.y, h.y))
+	return local.distance_to(closest) < float(circ["r"])
 
 func _can_pay(cost: Dictionary) -> bool:
 	for k in cost:
@@ -1832,7 +1957,9 @@ func map_marks() -> Array:
 	return out
 
 func _build_state() -> Dictionary:
-	return {"stock": stock, "planks": planks, "res": res, "placed": placed, "proj": proj, "furniture": furniture, "collected": collected, "blv": blv,
+	return {"stock": stock, "planks": planks, "res": res, "placed": placed, "proj": proj, "furniture": furniture, "collected": collected, "blv": blv, "up": up, "lv": lv,
+		"animals": animals().map(func(h): return {"kind": h.kind, "name": h.pet_name}),
+		"gold": gold, "skins_owned": skins_owned, "skins_on": skins_on,
 		"next": {"scierie": next_upgrade("scierie"), "machine": next_upgrade("machine"), "table": next_upgrade("table")}}
 
 func open_build_menu() -> void:
@@ -1916,12 +2043,12 @@ func _update_ghost() -> void:
 	var yaw := player.yaw + ghost_rot
 	ghost_err = ""
 	if ghost_key == "pont":
-		if absf(p.x - 10.3) > 6.0:
+		if absf(p.x - GameData.STREAM_X) > GameData.STREAM_W / 2.0 + 5.0:
 			ghost_err = "Le pont se pose sur le ruisseau : approche-toi de l'eau"
-		p.x = 10.3
+		p.x = GameData.STREAM_X
 		yaw = 0.0
 	if ghost_err == "":
-		ghost_err = _place_error(ghost_key, p, r)
+		ghost_err = _place_error(ghost_key, p, r, yaw)
 	ghost.position = p
 	ghost.rotation.y = yaw
 	ghost_mat.albedo_color = Color(0.35, 1.0, 0.45, 0.4) if ghost_err == "" else Color(1.0, 0.3, 0.25, 0.4)
@@ -1931,17 +2058,18 @@ func _update_ghost() -> void:
 	else:
 		hud_prompt.text = "❌ %s · Clic droit : annuler" % ghost_err
 
-func _place_error(key: String, p: Vector3, r: float) -> String:
-	var lim := GameData.AREA - r
-	if absf(p.x) > lim or absf(p.z) > lim:
+func _place_error(key: String, p: Vector3, r: float, yaw: float = 0.0) -> String:
+	var me := _shape_of(key, p, yaw) if not _def(key).is_empty() else {"c": Vector2(p.x, p.z), "r": r}
+	var ext := _extent(me)
+	if absf(p.x) > GameData.AREA - ext.x or absf(p.z) > GameData.AREA - ext.y:
 		return "Trop près du bord de la forêt"
-	if key != "pont" and absf(p.x - 10.3) < 1.5 + r:
-		return "Impossible de construire dans le ruisseau"
-	var p2 := Vector2(p.x, p.z)
+	if key != "pont" and absf(p.x - GameData.STREAM_X) < GameData.STREAM_W / 2.0 + 0.3 + ext.x:
+		return "Impossible de construire dans la rivière"
 	for ob in obstacles:
 		if ob.get("key", "") == key:
 			continue
-		if p2.distance_to(ob["p"]) < float(ob["r"]) + r:
+		var other: Dictionary = ob.get("shape", {"c": ob["p"], "r": ob["r"]})
+		if _shapes_hit(me, other):
 			if ob.has("key"):
 				return "Trop près de : %s" % _def(ob["key"])["name"]
 			return "Quelque chose gêne (arbre, rocher, tronc…)"
@@ -1969,7 +2097,7 @@ func _confirm_place() -> void:
 		n.position = p
 		n.rotation.y = yaw
 		n.visible = true
-		_set_obstacle(key, p)
+		_set_obstacle(key, p, yaw)
 		_clear_grass_at(p, float(d["foot"]))
 		_say("%s déplacé(e)" % d["name"])
 	else:
@@ -2056,6 +2184,11 @@ func _apply_effects() -> void:
 	player.stamina_max = 150.0 if proj.get("cabane", false) else 100.0
 	hud_stamina.max_value = player.stamina_max
 	helper_speed = 1.4 if proj.get("kiosque", false) else 1.0
+	# Dans la rivière : pas de saut, et patauger fatigue
+	player.in_water = _in_water()
+	if player.in_water and player.velocity.length() > 0.3:
+		player.stamina = maxf(0.0, player.stamina - 6.0 * get_process_delta_time())
+		player.regen_delay = maxf(player.regen_delay, 0.5)
 
 ## Trieuse automatique (la table trie seule) et convoyeur (les seaux vont seuls à la machine).
 func _automation(delta: float) -> void:
@@ -2167,7 +2300,7 @@ func _build_tuto(layer: CanvasLayer) -> void:
 	tuto_label.add_theme_font_size_override("font_size", 15)
 	vb.add_child(tuto_label)
 	var skip := Label.new()
-	skip.text = "F1 : passer le tutoriel"
+	skip.text = "%s : passer le tutoriel" % Settings.key_name("skip_tuto")
 	skip.add_theme_font_size_override("font_size", 12)
 	skip.modulate = Color(1, 1, 1, 0.6)
 	vb.add_child(skip)
@@ -2267,10 +2400,12 @@ func _apply_settings() -> void:
 	if tuto_step < TUTO_DONE:
 		_refresh_tuto()   # les touches citées dans le tutoriel suivent les Options
 
-func _restore_grass() -> void:
+func _restore_grass(p: float = -1.0) -> void:
 	if grass_mm == null:
 		return
-	var grow := clampf((_pct() - 0.1) / 0.9, 0.0, 1.0)
+	if p < 0.0:
+		p = _pct()
+	var grow := clampf((p - 0.1) / 0.9, 0.0, 1.0)
 	grass_mm.visible_instance_count = int(grow * grass_mm.instance_count * float(Settings.data["graphics"]["grass"]))
 
 ## Appelée par le menu pause quand on reprend la partie.
@@ -2312,10 +2447,17 @@ func save_data() -> Dictionary:
 		"recall_cd": recall_cd,
 		"bin_fill": bin_fill.duplicate(), "carried": carried.duplicate(), "delivered": delivered,
 		"placed": pl, "planks": planks, "furniture": furniture.duplicate(),
-		"sawmill_queue": sawmill.queue if sawmill != null else 0, "tuto": tuto_step, "blv": blv.duplicate(),
+		"sawmill_queue": sawmill.queue if sawmill != null else 0, "tuto": tuto_step, "blv": blv.duplicate(), "animal_names": _names_for_save(), "gold": gold, "gold_steps": gold_steps, "skins_owned": skins_owned.duplicate(), "skins_on": skins_on.duplicate(), "cine_done": cine_done.duplicate(),
 	}
 
 func _apply_save(s: Dictionary) -> void:
+	animal_names = s.get("animal_names", {})
+	gold = int(s.get("gold", 0))
+	gold_steps = int(s.get("gold_steps", 0))   # anciennes parties : les glands dorés déjà mérités arrivent au chargement
+	skins_owned = s.get("skins_owned", {})
+	skins_on = s.get("skins_on", {})
+	_apply_skins()
+	_cine_from_save = s.get("cine_done", null)
 	for it in s.get("items", []):
 		_place_item(Vector2(float(it[0]), float(it[1])), int(it[3]), str(it[4]), float(it[2]))
 	bag = s.get("bag", [])
@@ -2354,7 +2496,9 @@ func _apply_save(s: Dictionary) -> void:
 		var built: Dictionary = s["placed"]
 		for k in built:
 			var a: Array = built[k]
-			_spawn_building(k, Vector3(float(a[0]), 0.0, float(a[1])), float(a[2]))
+			# Le pont reste sur la rivière (elle a été élargie et déplacée en 0.9)
+			var bx: float = GameData.STREAM_X if k == "pont" else float(a[0])
+			_spawn_building(k, Vector3(bx, 0.0, float(a[1])), 0.0 if k == "pont" else float(a[2]))
 		tuto_step = int(s.get("tuto", TUTO_DONE))
 	else:
 		_spawn_building("table", GameData.LEGACY_POS["table"], 0.0)
@@ -2397,6 +2541,13 @@ func _apply_save(s: Dictionary) -> void:
 		cur_tool = 0
 	_refresh_buckets()
 	_refresh_hotbar()
+	# Cinématiques déjà vues ; une partie d'avant la 0.9 ne rejoue pas celles qu'elle a dépassées
+	if _cine_from_save is Dictionary:
+		cine_done = _cine_from_save
+	else:
+		for cs in CINE_STEPS:
+			if _pct() >= float(cs[1]):
+				cine_done[cs[0]] = true
 	_restore()
 	_say("Partie chargée")
 
@@ -2404,3 +2555,84 @@ func _notification(what: int) -> void:
 	# Fermeture de la fenêtre pendant la partie : sauvegarde automatique si l'option est active
 	if what == NOTIFICATION_WM_CLOSE_REQUEST and Settings.data["game"]["autosave"]:
 		SaveGame.write(save_data())
+
+# ---------- Noms des animaux ----------
+## Une idée de nom pas encore prise pour cette espèce.
+func random_name(kind: String) -> String:
+	var taken := {}
+	for h in helpers:
+		if is_instance_valid(h):
+			taken[h.pet_name] = true
+	var ideas: Array = NAME_IDEAS.get(kind, ["Ami"])
+	var free := ideas.filter(func(n): return not taken.has(n))
+	if free.is_empty():
+		return "%s %d" % [ideas[randi() % ideas.size()], randi_range(2, 99)]
+	return free[randi() % free.size()]
+
+func rename_animal(i: int, new_name: String) -> void:
+	var list := animals()
+	if i < 0 or i >= list.size():
+		return
+	var n := new_name.strip_edges().left(20)
+	if n != "":
+		list[i].set_pet_name(n)
+
+## Animaux présents, dans l'ordre d'arrivée.
+func animals() -> Array:
+	return helpers.filter(func(o): return is_instance_valid(o))
+
+func _names_for_save() -> Dictionary:
+	var out := {}
+	for h in animals():
+		if not out.has(h.kind):
+			out[h.kind] = []
+		out[h.kind].append(h.pet_name)
+	return out
+
+# ---------- Glands dorés et skins ----------
+func _check_gold() -> void:
+	var steps := collected / GameData.GOLD_STEP
+	if steps > gold_steps:
+		var n := (steps - gold_steps) * GameData.GOLD_PER_STEP
+		gold_steps = steps
+		gold += n
+		_play("buy")
+		_say("✨ +%d glands dorés ! Dépense-les dans la Boutique (menu %s)" % [n, Settings.key_name("build_menu")])
+		_update_hud()
+
+func skin_on(cat: String) -> String:
+	return skins_on.get(cat, GameData.default_skin(cat))
+
+## Acheter (si besoin) puis équiper un skin.
+func buy_skin(key: String) -> void:
+	var s := GameData.skin(key)
+	if s.is_empty():
+		return
+	if not skins_owned.has(key) and int(s["cost"]) > 0:
+		if gold < int(s["cost"]):
+			_play("bad")
+			return
+		gold -= int(s["cost"])
+		skins_owned[key] = true
+		_play("buy")
+		_say("✨ Nouveau skin : %s" % s["name"])
+	skins_on[s["cat"]] = key
+	_apply_skins()
+	if mode == "menu":
+		build_menu.refresh(_build_state())
+	_update_hud()
+
+## Applique les skins équipés : personnage, animaux, chalet et meubles.
+func _apply_skins() -> void:
+	var perso := GameData.skin(skin_on("personnage"))
+	if player != null and perso.has("model"):
+		player.set_avatar(perso["model"])
+	Helper.fur_colors["squirrel"] = GameData.skin(skin_on("ecureuil"))["color"]
+	Helper.fur_colors["hedgehog"] = GameData.skin(skin_on("herisson"))["color"]
+	for h in animals():
+		if h.kind == "squirrel" or h.kind == "hedgehog":
+			h.rebuild()
+	for cat in ["chalet", "lit", "tapis", "lampe"]:
+		Chalet.skin[cat] = GameData.skin(skin_on(cat))
+	if chalet != null:
+		chalet.rebuild(furniture)

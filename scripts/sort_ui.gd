@@ -1,19 +1,16 @@
 class_name SortUI
 extends CanvasLayer
-## Table : onglets Tri / Outils (les chantiers sont dans le menu de construction, Tab).
+## Table de tri : on y trie le contenu du sac (les outils et constructions sont dans le menu Tab).
 
 signal bin_chosen(i: int)
-signal bought(key: String)
 signal closed
 
 var panel: PanelContainer
-var tabs: TabContainer
 var swatch: Label
 var cur_label: Label
 var left_label: Label
 var cur_row: HBoxContainer
 var bins_box: GridContainer
-var ups_box: VBoxContainer
 var back: Button
 var note: Label
 
@@ -37,18 +34,14 @@ func _ready() -> void:
     margin.add_child(vb)
 
     var title := Label.new()
-    title.text = "Table du gardien"
+    title.text = "Table de tri (touches 1-6)"
     title.add_theme_font_size_override("font_size", 22)
     vb.add_child(title)
 
-    tabs = TabContainer.new()
-    tabs.custom_minimum_size = Vector2(620, 380)
-    vb.add_child(tabs)
-
-    # --- Onglet Tri ---
     var t1 := VBoxContainer.new()
     t1.add_theme_constant_override("separation", 10)
-    tabs.add_child(t1)
+    t1.custom_minimum_size = Vector2(620, 340)
+    vb.add_child(t1)
     cur_row = HBoxContainer.new()
     cur_row.add_theme_constant_override("separation", 12)
     swatch = Label.new()
@@ -70,16 +63,7 @@ func _ready() -> void:
     note.custom_minimum_size = Vector2(600, 0)
     note.add_theme_font_size_override("font_size", 15)
     t1.add_child(note)
-    tabs.set_tab_title(0, "Tri (touches 1-6)")
 
-    # --- Onglet Outils ---
-    var t2 := ScrollContainer.new()
-    t2.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-    ups_box = VBoxContainer.new()
-    ups_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    t2.add_child(ups_box)
-    tabs.add_child(t2)
-    tabs.set_tab_title(1, "Outils")
 
     back = Button.new()
     back.pressed.connect(func(): closed.emit())
@@ -87,12 +71,11 @@ func _ready() -> void:
 
 func open(st: Dictionary) -> void:
     visible = true
-    tabs.current_tab = 0
     back.text = "Retourner dans la forêt (%s)" % Settings.key_name("interact")
     refresh(st)
 
 func on_sort_tab() -> bool:
-    return tabs.current_tab == 0
+    return true
 
 func _color_button(b: Button, c: Color) -> void:
     for state in ["normal", "hover", "pressed"]:
@@ -102,26 +85,6 @@ func _color_button(b: Button, c: Color) -> void:
         sb.content_margin_top = 10
         sb.content_margin_bottom = 10
         b.add_theme_stylebox_override(state, sb)
-
-func _has(st: Dictionary, k: String) -> bool:
-    return st["up"].get(k, false) or st["lv"].get(k, 0) > 0 or st["proj"].get(k, false)
-
-func _row(text: String, btn_text: String, disabled: bool, cb: Callable) -> HBoxContainer:
-    var row := HBoxContainer.new()
-    row.add_theme_constant_override("separation", 10)
-    var l := Label.new()
-    l.text = text
-    l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-    l.custom_minimum_size = Vector2(430, 0)
-    l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    var b := Button.new()
-    b.text = btn_text
-    b.disabled = disabled
-    b.custom_minimum_size = Vector2(110, 0)
-    b.pressed.connect(cb)
-    row.add_child(l)
-    row.add_child(b)
-    return row
 
 func refresh(st: Dictionary) -> void:
     var table: Array = st["table"]
@@ -149,28 +112,6 @@ func refresh(st: Dictionary) -> void:
         b.disabled = not has
         b.pressed.connect(func(): bin_chosen.emit(i))
         bins_box.add_child(b)
-
-    # Outils
-    for c in ups_box.get_children():
-        c.queue_free()
-    var collected: int = st["collected"]
-    if collected < GameData.TOOLS_UNLOCK_COUNT:
-        var lock := Label.new()
-        lock.text = "🔒 Outils débloqués après %d objets ramassés (actuellement %d)" % [GameData.TOOLS_UNLOCK_COUNT, collected]
-        ups_box.add_child(lock)
-    else:
-        for u in GameData.UPGRADES:
-            var key: String = u["key"]
-            var mx: int = u.get("max", 1)
-            var lvl: int = st["lv"].get(key, 0) if mx > 1 else (1 if st["up"].get(key, false) else 0)
-            var cost: int = int(u["cost"]) * (lvl + 1)
-            var req: String = u.get("req", "")
-            var blocked: bool = req != "" and not _has(st, req)
-            var done: bool = lvl >= mx
-            var txt: String = "%s – %s" % [u["name"], u["desc"]]
-            if mx > 1:
-                txt += "  [niv %d/%d]" % [lvl, mx]
-            ups_box.add_child(_row(txt, "Acquis" if done else "%d 🌿" % cost, done or blocked or int(st["res"]) < cost, func(): bought.emit(key)))
 
 ## Message important dans la fenêtre de tri (le HUD est caché derrière).
 func flash(text: String) -> void:

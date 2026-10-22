@@ -1,0 +1,8 @@
+PERSONNAGES - KayKit : Adventurers Character Pack 1.0, par Kay Lousberg (www.kaylousberg.com)
+Licence CC0 (domaine public) : https://creativecommons.org/publicdomain/zero/1.0/
+Source : https://github.com/KayKit-Game-Assets/KayKit-Character-Pack-Adventures-1.0
+
+  Rogue_Hooded.glb  - le gardien (par défaut)
+  Rogue.glb, Mage.glb, Barbarian.glb, Knight.glb - skins de la Boutique
+  Les armes incluses dans les modèles sont masquées par le jeu.
+Merci à Kay Lousberg !

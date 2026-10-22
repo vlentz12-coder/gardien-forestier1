@@ -25,6 +25,8 @@ const ACTIONS := [
 	["look_up", "Regarder en haut", KEY_UP],
 	["look_down", "Regarder en bas", KEY_DOWN],
 	["edge_mode", "Caméra « bords d'écran »", KEY_C],
+	["view", "Vue 1re / 3e personne", KEY_V],
+	["skip_tuto", "Passer le tutoriel", KEY_F1],
 	["debug", "Infos de debug", KEY_F3],
 ]
 
@@ -37,7 +39,7 @@ const DEFAULTS := {
 	},
 	"audio": {"master": 0.8, "music": 0.6, "sfx": 1.0, "ambient": 1.0, "mute": false},
 	"controls": {"sensitivity": 1.0, "invert_y": false},
-	"game": {"autosave": true, "minimap": true, "ui_scale": 1.0},
+	"game": {"autosave": true, "minimap": true, "ui_scale": 1.0, "cinematics": true},
 }
 
 const KEY_NAMES := {

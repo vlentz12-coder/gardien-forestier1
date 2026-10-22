@@ -11,6 +11,14 @@ var _gears: Array = []
 var _display: Label3D
 var _chimney_top := Vector3(0, 4.35, -0.5)
 var _spin := 0.0
+# Cuves : un liquide vert lumineux qui monte avec la restauration de la forêt
+const TANK_BOTTOM := 2.62
+const TANK_H := 1.24
+var _liquids: Array = []
+var _fill := 0.0          # niveau affiché (0..1), suit _fill_target en douceur
+var _fill_target := 0.0
+var _liquid_mat: StandardMaterial3D
+var _bubble_t := 0.0
 
 func _ready() -> void:
 	# Corps + collision
@@ -25,9 +33,25 @@ func _ready() -> void:
 	sb.add_child(cs)
 	add_child(sb)
 	# Cuves vitrées et cheminée
+	_liquid_mat = StandardMaterial3D.new()
+	_liquid_mat.albedo_color = Color(0.25, 0.95, 0.35, 0.85)
+	_liquid_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	_liquid_mat.emission_enabled = true
+	_liquid_mat.emission = Color(0.2, 0.9, 0.3)
+	_liquid_mat.emission_energy_multiplier = 0.9
+	_liquid_mat.roughness = 0.1
 	for x in [-2.0, 2.0]:
-		var tank := _cyl(0.75, 0.75, 1.3, Color(0.45, 0.85, 0.55, 0.45), Vector3(x, 3.25, -0.3))
-		(tank.material_override as StandardMaterial3D).transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		var liquid := _cyl(0.69, 0.69, 1.0, Color.WHITE, Vector3(x, TANK_BOTTOM, -0.3))
+		liquid.material_override = _liquid_mat
+		liquid.scale.y = 0.001
+		liquid.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		_liquids.append(liquid)
+		var tank := _cyl(0.75, 0.75, 1.3, Color(0.7, 0.9, 0.85, 0.22), Vector3(x, 3.25, -0.3))
+		var tm := tank.material_override as StandardMaterial3D
+		tm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		tm.roughness = 0.05
+		tm.metallic_specular = 1.0
+		tank.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		_cyl(0.8, 0.8, 0.1, METAL.darkened(0.25), Vector3(x, 3.95, -0.3))
 	_cyl(0.22, 0.28, 1.8, Color(0.3, 0.3, 0.32), Vector3(0, 3.4, -0.5))
 	# Engrenages sur les côtés
@@ -63,7 +87,47 @@ func _process(delta: float) -> void:
 	_spin = maxf(0.0, _spin - delta * 2.5)
 	for g in _gears:
 		g.rotate_object_local(Vector3.UP, (0.3 + _spin) * delta)
+	# Le liquide monte doucement jusqu'au niveau de restauration, en ondulant un peu
+	_fill = move_toward(_fill, _fill_target, delta * 0.08)
+	for i in _liquids.size():
+		var h := maxf(0.001, _fill * TANK_H + sin(Time.get_ticks_msec() * 0.003 + i) * 0.01 * signf(_fill))
+		var l: MeshInstance3D = _liquids[i]
+		l.scale.y = h
+		l.position.y = TANK_BOTTOM + h / 2.0
+	_liquid_mat.emission_energy_multiplier = 0.7 + _spin * 0.15
+	if _fill > 0.02:
+		_bubble_t -= delta
+		if _bubble_t <= 0.0:
+			_bubble_t = randf_range(0.15, 0.5) / (1.0 + _spin * 0.3)
+			_bubble()
 
+## Niveau du liquide vert dans les cuves (0 : vide, 1 : pleines = forêt restaurée).
+func set_fill(p: float, instant := false) -> void:
+	_fill_target = clampf(maxf(p, 0.05) if p > 0.0 else 0.0, 0.0, 1.0)   # dès le 1er versement, on voit du liquide
+	if instant:
+		_fill = _fill_target
+
+func _bubble() -> void:
+	var tank: MeshInstance3D = _liquids[randi() % _liquids.size()]
+	var s := SphereMesh.new()
+	s.radius = randf_range(0.03, 0.07)
+	s.height = s.radius * 2.0
+	var mi := MeshInstance3D.new()
+	mi.mesh = s
+	var m := StandardMaterial3D.new()
+	m.albedo_color = Color(0.8, 1.0, 0.8, 0.6)
+	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mi.material_override = m
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	var a := randf() * TAU
+	var r := randf() * 0.5
+	var top := TANK_BOTTOM + _fill * TANK_H
+	mi.position = Vector3(tank.position.x + cos(a) * r, TANK_BOTTOM + 0.05, -0.3 + sin(a) * r)
+	add_child(mi)
+	var tw := create_tween()
+	tw.tween_property(mi, "position:y", top, randf_range(0.8, 1.6) * maxf(0.2, _fill))
+	tw.tween_callback(mi.queue_free)
 ## Point visé par le joueur pour le réceptacle i (ouverture de l'entonnoir).
 func receptacle_point(i: int) -> Vector3:
 	return (_funnels[i] as Node3D).global_position + Vector3(0, 1.3, 0)
@@ -105,9 +169,28 @@ func puff(col: Color) -> void:
 		tw.chain().tween_callback(mi.queue_free)
 
 # ---------- Petits constructeurs ----------
+static var _paint_normal: NoiseTexture2D
+
+## Métal peint : un peu brillant, avec un léger relief de tôle martelée.
 func _mat(c: Color) -> StandardMaterial3D:
 	var m := StandardMaterial3D.new()
 	m.albedo_color = c
+	if c.a >= 0.99:
+		if _paint_normal == null:
+			var nz := FastNoiseLite.new()
+			nz.frequency = 0.05
+			_paint_normal = NoiseTexture2D.new()
+			_paint_normal.seamless = true
+			_paint_normal.as_normal_map = true
+			_paint_normal.bump_strength = 2.0
+			_paint_normal.noise = nz
+		m.metallic = 0.45
+		m.roughness = 0.5
+		m.normal_enabled = true
+		m.normal_texture = _paint_normal
+		m.normal_scale = 0.35
+		m.uv1_triplanar = true
+		m.uv1_scale = Vector3.ONE * 0.8
 	return m
 
 func _box(size: Vector3, c: Color, pos: Vector3) -> MeshInstance3D:

@@ -41,6 +41,8 @@ static func make_bucket(col: Color) -> Node3D:
 	body.height = 0.34
 	var bm := StandardMaterial3D.new()
 	bm.albedo_color = Color(0.62, 0.66, 0.7)
+	bm.metallic = 0.75   # métal brossé
+	bm.roughness = 0.35
 	bm.metallic = 0.6
 	bm.roughness = 0.35
 	var b := MeshInstance3D.new()

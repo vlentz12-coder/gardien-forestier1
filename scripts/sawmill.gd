@@ -19,10 +19,10 @@ var _label: Label3D
 
 func _ready() -> void:
 	# Établi + collision
-	_box(Vector3(2.4, 0.12, 1.0), WOOD, Vector3(0, 0.82, 0))
+	_tex(_box(Vector3(2.4, 0.12, 1.0), WOOD, Vector3(0, 0.82, 0)), "plancher", Color(1, 0.95, 0.88))
 	for x in [-1.05, 1.05]:
 		for z in [-0.4, 0.4]:
-			_box(Vector3(0.12, 0.8, 0.12), WOOD.darkened(0.25), Vector3(x, 0.4, z))
+			_tex(_box(Vector3(0.12, 0.8, 0.12), WOOD.darkened(0.25), Vector3(x, 0.4, z)), "meubles", Color(0.85, 0.8, 0.75))
 	var sb := StaticBody3D.new()
 	var cs := CollisionShape3D.new()
 	var sh := BoxShape3D.new()
@@ -34,18 +34,20 @@ func _ready() -> void:
 	# Lame circulaire et son carter
 	_blade = _cyl(0.42, 0.42, 0.04, Color(0.75, 0.77, 0.8), Vector3(0.1, 1.05, 0))
 	_blade.rotation.x = PI / 2.0
-	(_blade.material_override as StandardMaterial3D).metallic = 0.8
+	(_blade.material_override as StandardMaterial3D).metallic = 0.9
+	(_blade.material_override as StandardMaterial3D).roughness = 0.25
 	_box(Vector3(0.9, 0.08, 0.3), Color(0.8, 0.3, 0.15), Vector3(0.1, 1.5, 0))
 	# Trémie à bûches (à gauche) : c'est là qu'on vise pour charger
-	_box(Vector3(0.8, 0.5, 0.8), WOOD.darkened(0.1), Vector3(-1.3, 1.15, 0))
+	_tex(_box(Vector3(0.8, 0.5, 0.8), WOOD.darkened(0.1), Vector3(-1.3, 1.15, 0)), "murs", Color(0.9, 0.82, 0.72))
 	for k in 4:
 		var lg := _cyl(0.1, 0.1, 0.7, Color(0.45, 0.3, 0.16), Vector3(-1.3, 1.45 + k * 0.17, -0.2 + (k % 2) * 0.4))
 		lg.rotation.x = PI / 2.0
+		lg.material_override = Nature.bark(0.7)
 		lg.visible = false
 		_hopper_logs.append(lg)
 	# Pile de planches produites (à droite)
 	for k in 8:
-		var p := _box(Vector3(0.9, 0.05, 0.22), Color(0.82, 0.64, 0.4), Vector3(1.75, 0.03 + k * 0.06, -0.25 + (k % 2) * 0.5))
+		var p := _tex(_box(Vector3(0.9, 0.05, 0.22), Color(0.82, 0.64, 0.4), Vector3(1.75, 0.03 + k * 0.06, -0.25 + (k % 2) * 0.5)), "plancher", Color(1.0, 0.92, 0.8))
 		p.visible = false
 		_stack.append(p)
 	_label = Label3D.new()
@@ -126,4 +128,9 @@ func _add(m: Mesh, c: Color, pos: Vector3) -> MeshInstance3D:
 	mi.material_override = mat
 	mi.position = pos
 	add_child(mi)
+	return mi
+
+## Remplace la couleur unie par une matière texturée (bois…), comme le chalet.
+func _tex(mi: MeshInstance3D, kind: String, tint: Color) -> MeshInstance3D:
+	mi.material_override = Chalet._material(kind, tint)
 	return mi

@@ -19,6 +19,20 @@ const MATERIALS := {
 }
 
 static var _mats := {}
+static var skin := {}   # skins équipés : "chalet", "lit", "tapis", "lampe" → données de GameData.SKINS
+var _built := {}
+
+static func _skin_col(cat: String, k: String, def: Color) -> Color:
+	return skin.get(cat, {}).get(k, def)
+
+## Reconstruit tout le chalet (changement de skin), meubles compris.
+func rebuild(built: Dictionary) -> void:
+	for c in get_children():
+		remove_child(c)
+		c.queue_free()
+	_slots.clear()
+	_ready()
+	set_furniture(built)
 
 # Emplacement de chaque meuble dans le chalet : [position, rotation y]
 const SLOTS := {
@@ -45,10 +59,10 @@ func _ready() -> void:
 	_ghost_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	# Plancher et murs
 	_box(self, Vector3(W - 0.2, FLOOR + 0.04, D - 0.2), Color(1.0, 0.93, 0.85), Vector3(0, (FLOOR - 0.04) / 2.0, 0), "plancher")
-	_box(self, Vector3(W, H, 0.2), WALL, Vector3(0, H / 2.0, -D / 2.0 + 0.1), "murs")
+	_box(self, Vector3(W, H, 0.2), _skin_col("chalet", "color", WALL), Vector3(0, H / 2.0, -D / 2.0 + 0.1), "murs")
 	for sx in [-1.0, 1.0]:
-		_box(self, Vector3(0.2, H, D), WALL, Vector3(sx * (W / 2.0 - 0.1), H / 2.0, 0), "murs")
-		_box(self, Vector3(2.8, H, 0.2), WALL, Vector3(sx * 2.1, H / 2.0, D / 2.0 - 0.1), "murs")   # façade, de part et d'autre de la porte
+		_box(self, Vector3(0.2, H, D), _skin_col("chalet", "color", WALL), Vector3(sx * (W / 2.0 - 0.1), H / 2.0, 0), "murs")
+		_box(self, Vector3(2.8, H, 0.2), _skin_col("chalet", "color", WALL), Vector3(sx * 2.1, H / 2.0, D / 2.0 - 0.1), "murs")   # façade, de part et d'autre de la porte
 		# Fenêtres
 		_box(self, Vector3(0.26, 0.8, 1.2), GLASS, Vector3(sx * (W / 2.0 - 0.1), 1.5, -0.4), "vitre")
 		_box(self, Vector3(1.0, 0.7, 0.26), GLASS, Vector3(sx * 2.1, 1.5, D / 2.0 - 0.1), "vitre")
@@ -59,7 +73,7 @@ func _ready() -> void:
 		_box(self, Vector3(0.3, 0.8, 0.06), DARK, Vector3(sx * (W / 2.0 - 0.1), 1.5, -0.4), "meubles")
 		_box(self, Vector3(1.0, 0.06, 0.3), DARK, Vector3(sx * 2.1, 1.5, D / 2.0 - 0.1), "meubles")
 		_box(self, Vector3(0.06, 0.7, 0.3), DARK, Vector3(sx * 2.1, 1.5, D / 2.0 - 0.1), "meubles")
-	_box(self, Vector3(1.4, 0.5, 0.2), WALL, Vector3(0, 2.35, D / 2.0 - 0.1), "murs")   # linteau de la porte
+	_box(self, Vector3(1.4, 0.5, 0.2), _skin_col("chalet", "color", WALL), Vector3(0, 2.35, D / 2.0 - 0.1), "murs")   # linteau de la porte
 	_box(self, Vector3(1.6, 0.1, 0.7), DARK, Vector3(0, 0.05, D / 2.0 + 0.35), "meubles")   # marche
 	# Poutres d'angle
 	for sx in [-1.0, 1.0]:
@@ -76,12 +90,12 @@ func _ready() -> void:
 		pivot.position = Vector3(sx * plen / 2.0 * cos(slope), H + rise - plen / 2.0 * sin(slope), 0)
 		pivot.rotation.z = -sx * slope
 		add_child(pivot)
-		var r := _box(pivot, Vector3(D + 0.8, 0.15, plen), ROOF, Vector3.ZERO, "toit")
+		var r := _box(pivot, Vector3(D + 0.8, 0.15, plen), _skin_col("chalet", "color2", ROOF), Vector3.ZERO, "toit")
 		r.rotation.y = PI / 2.0
 	for sz in [-1.0, 1.0]:
 		var pm := PrismMesh.new()
 		pm.size = Vector3(W, rise, 0.2)
-		_add(self, pm, WALL, Vector3(0, H + rise / 2.0, sz * (D / 2.0 - 0.1)), "murs")
+		_add(self, pm, _skin_col("chalet", "color", WALL), Vector3(0, H + rise / 2.0, sz * (D / 2.0 - 0.1)), "murs")
 	_box(self, Vector3(0.5, 1.4, 0.5), STONE, Vector3(1.0, H + rise + 0.1, -1.6), "pierre")   # conduit de cheminée
 	# Enseigne
 	var sign_lbl := Label3D.new()
@@ -117,6 +131,7 @@ func _process(delta: float) -> void:
 
 ## Construit les meubles achetés et montre les autres en fantômes. "pop" : meuble qui vient d'être construit.
 func set_furniture(built: Dictionary, pop: String = "") -> void:
+	_built = built
 	for f in GameData.FURNITURE:
 		var key: String = f["key"]
 		if _slots.has(key):
@@ -158,9 +173,11 @@ static func make_furniture(key: String) -> Node3D:
 	var brass := Color(0.85, 0.68, 0.3)
 	match key:
 		"tapis":
-			_box(n, Vector3(2.0, 0.02, 1.3), Color(0.72, 0.2, 0.17), Vector3(0, 0.05, 0), "tissu")
-			_box(n, Vector3(1.6, 0.025, 0.9), Color(0.98, 0.8, 0.42), Vector3(0, 0.055, 0), "tissu")
-			_box(n, Vector3(1.2, 0.03, 0.5), Color(0.72, 0.2, 0.17), Vector3(0, 0.06, 0), "tissu")
+			var c1 := _skin_col("tapis", "color", Color(0.72, 0.2, 0.17))
+			var c2 := _skin_col("tapis", "color2", Color(0.98, 0.8, 0.42))
+			_box(n, Vector3(2.0, 0.02, 1.3), c1, Vector3(0, 0.05, 0), "tissu")
+			_box(n, Vector3(1.6, 0.025, 0.9), c2, Vector3(0, 0.055, 0), "tissu")
+			_box(n, Vector3(1.2, 0.03, 0.5), c1, Vector3(0, 0.06, 0), "tissu")
 		"table_repas":
 			_box(n, Vector3(1.4, 0.07, 0.85), wood, Vector3(0, 0.76, 0), "meubles")
 			_box(n, Vector3(1.26, 0.08, 0.7), dark, Vector3(0, 0.69, 0), "meubles")   # ceinture sous le plateau
@@ -181,7 +198,7 @@ static func make_furniture(key: String) -> Node3D:
 			_box(n, Vector3(1.25, 0.32, 2.1), dark, Vector3(0, 0.2, 0), "meubles")
 			_box(n, Vector3(1.15, 0.16, 1.98), Color(0.96, 0.95, 0.92), Vector3(0, 0.44, 0.02), "drap")
 			_box(n, Vector3(0.8, 0.12, 0.35), Color(1, 1, 1), Vector3(0, 0.57, -0.75), "drap")
-			_box(n, Vector3(1.21, 0.07, 1.3), Color(0.3, 0.52, 0.38), Vector3(0, 0.54, 0.38), "tissu")
+			_box(n, Vector3(1.21, 0.07, 1.3), _skin_col("lit", "color", Color(0.3, 0.52, 0.38)), Vector3(0, 0.54, 0.38), "tissu")
 			_box(n, Vector3(1.25, 0.9, 0.08), dark, Vector3(0, 0.45, -1.05), "meubles")
 			_box(n, Vector3(1.25, 0.5, 0.06), dark, Vector3(0, 0.25, 1.05), "meubles")   # pied de lit
 		"coffre":
@@ -238,10 +255,11 @@ static func make_furniture(key: String) -> Node3D:
 		"lampe":
 			_cyl(n, 0.18, 0.2, 0.05, dark, Vector3(0, 0.03, 0), "meubles")
 			_cyl(n, 0.025, 0.025, 1.45, dark, Vector3(0, 0.75, 0), "meubles")
-			var shade := _cyl(n, 0.14, 0.26, 0.3, Color(1.0, 0.9, 0.6), Vector3(0, 1.55, 0))
+			var shade_col := _skin_col("lampe", "color", Color(1.0, 0.9, 0.6))
+			var shade := _cyl(n, 0.14, 0.26, 0.3, shade_col, Vector3(0, 1.55, 0))
 			var sm := shade.material_override as StandardMaterial3D
 			sm.emission_enabled = true
-			sm.emission = Color(1.0, 0.85, 0.5)
+			sm.emission = shade_col.darkened(0.1)
 			sm.emission_energy_multiplier = 1.5
 			var lamp := OmniLight3D.new()
 			lamp.light_color = Color(1.0, 0.85, 0.6)

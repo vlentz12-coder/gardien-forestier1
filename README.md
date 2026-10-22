@@ -36,6 +36,27 @@ Le bouton **Placer** fait apparaître un fantôme de la construction devant toi 
 Les meubles apparaissent en fantômes dans le chalet tant qu'ils ne sont pas construits. Ils sont décoratifs :
 c'est la récompense de fin, un endroit où t'installer dans la forêt rangée.
 
+## Le monde
+
+- Carte de **150 × 150 m** : la clairière du camp, quatre zones (Sentier des Écureuils, Marais aux Champignons,
+  Vieille Scierie, Cœur de la Forêt) reliées par des chemins de terre.
+- Une **rivière large** : on y avance très lentement, on ne peut pas y sauter et patauger fatigue. Le **pont** la traverse.
+- Le gardien a un corps : on voit ses **mains** (elles attrapent les objets, tiennent le seau) et ses **jambes** en baissant les yeux.
+- Les **constructions se collent** les unes aux autres et aux arbres : chacune a une empreinte rectangulaire
+  qui suit sa rotation, et seuls les troncs (pas les feuillages) gênent la pose.
+- Écureuils, hérissons et **oiseaux** (autour du nichoir) ont un pelage ou un plumage.
+- Chaque animal a un **nom**, affiché au-dessus de lui : on le choisit en achetant un écureuil ou un hérisson,
+  et on renomme tout le monde dans le menu `Tab`, onglet **Animaux**.
+- Le gardien est un **personnage 3D animé** (rôdeur encapuchonné, KayKit) : il marche, court, saute, ramasse.
+  Touche `V` pour le voir à la 3e personne.
+- **Glands dorés** : +10 tous les 100 objets ramassés. Ils achètent des **skins** dans le menu `Tab`, onglet **Boutique** :
+  personnage (5 au choix), pelage des écureuils et hérissons, couleurs du chalet, du lit, du tapis et de la lampe.
+- 18 objets à ramasser, chacun avec sa forme et sa matière : feuilles d'érable et de noisetier en couleurs d'automne,
+  aiguilles de pin, branches en écorce, pommes de pin, glands, bouteilles en verre, sacs plastique, baies, gravier…
+- Les **cuves de la machine se remplissent** d'un liquide vert lumineux à mesure que la forêt se restaure.
+- **Cinématiques** : au premier versement (une onde verte part de la machine), puis à 25, 50 et 75 %,
+  et un tour complet « avant / après » à 100 %. Chacune n'est jouée qu'une fois (Échap pour passer,
+  désactivables dans *Options > Jeu*). L'herbe, les arbres, les chemins et l'eau y passent vraiment de l'état abîmé à restauré.
 ## Paliers de constructions et automatisation
 
 Les chantiers (onglet *Chantiers* du menu `Tab`) se débloquent en trois paliers :
@@ -112,11 +133,12 @@ reliés par des fondus enchaînés. Volume réglable dans *Options > Audio > Mus
 | `1` à `6` (dans le tri) | Choisir une poubelle |
 | `R` | Retour au camp |
 | `C` | Basculer la caméra en mode « bords d'écran » |
+| `V` | Vue à la 1re / 3e personne |
 | `Échap` | Pause |
 | `F1` | Passer le tutoriel |
 | `F3` | Infos de debug |
 
-Les outils (râteau, pinces, sac…) se débloquent à la table après **100 objets ramassés**.
+Les outils (râteau, pinces, sac…) se débloquent après **100 objets ramassés** : ils s'achètent dans le menu `Tab`, onglet **Outils**.
 
 ## Ouvrir le projet dans Godot
 
@@ -132,11 +154,13 @@ menu.tscn              menu principal
 main.tscn              la partie (le monde est construit par scripts/main.gd)
 scripts/
   main.gd              monde, ramassage, tri, seaux, placement des constructions, tutoriel, sauvegarde
-  build_menu.gd        menu de construction (Tab) : Essentiel / Chantiers / Chalet
+  build_menu.gd        menu de construction (Tab) : Essentiel / Outils / Chantiers / Chalet / Animaux / Boutique
   machine.gd           LaMachineQuiRestoreLaForêtator (réceptacles, fumée, écran)
   buckets.gd           les seaux de produits devant la table
   sawmill.gd           la scierie (bûches → planches)
   chalet.gd            le chalet et ses meubles
+  items.gd             les 18 objets à ramasser (formes et matières)
+  cinematic.gd         cinématiques de restauration
   nature.gd            matières du décor : sol, chemins, boue, feuillage, herbe au vent, eau, buissons
   game_data.gd         constantes : nombre d'objets, catégories, outils, chantiers
   settings.gd          options du joueur (autoload), touches, audio, affichage
@@ -151,6 +175,7 @@ scripts/
 assets/models/         modèles 3D et textures (voir assets/models/LISEZMOI.txt)
 assets/textures/       textures du chalet et des meubles (voir CREDITS.txt)
 assets/music/          musiques (voir CREDITS.txt)
+assets/characters/     personnages 3D animés (voir CREDITS.txt)
 export_presets.cfg     préréglage d'export Windows
 .github/workflows/     compilation automatique sur GitHub
 ```
@@ -168,4 +193,5 @@ Tous ces fichiers sont sous licence **CC0** (domaine public). Merci à leurs aut
 - **Musiques** : *Chill lofi inspired* par omfgdude ; *Relaxing Instrumentals* par Holizna (OpenGameArt).
   Détails : `assets/music/CREDITS.txt`.
 - **Textures du chalet et du décor** (herbe, chemins, boue, feuillage) : [ambientCG](https://ambientcg.com). Détails : `assets/textures/CREDITS.txt`.
+- **Personnages** : *KayKit Adventurers* par Kay Lousberg (CC0). Détails : `assets/characters/CREDITS.txt`.
 - **Arbres, rochers, champignons** : voir `assets/models/LISEZMOI.txt`.

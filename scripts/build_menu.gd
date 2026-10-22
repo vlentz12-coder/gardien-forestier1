@@ -1,15 +1,25 @@
 class_name BuildMenu
 extends CanvasLayer
-## Menu de construction (Tab) : onglets Essentiel (+ améliorations) / Chantiers (3 paliers) / Chalet.
+## Menu de construction (Tab) : onglets Essentiel (+ améliorations) / Outils / Chantiers (3 paliers) / Chalet / Animaux.
 ## « Placer » ferme le menu et lance le placement (fantôme vert/rouge) ; on ne paie qu'en posant.
 
 signal place(key: String)
 signal furnish(key: String)
 signal upgrade(key: String)
+signal bought(key: String)    # outil ou aide achetés avec les 🌿
+signal rename(index: int, new_name: String)   # nom d'un animal
+signal skin(key: String)    # acheter / équiper un skin (Boutique)
 signal closed
 
 var tabs: TabContainer
 var boxes: Array = []        # VBoxContainer de chaque onglet
+var box_ess: VBoxContainer
+var box_tools: VBoxContainer
+var box_proj: VBoxContainer
+var box_chalet: VBoxContainer
+var box_animals: VBoxContainer
+var box_shop: VBoxContainer
+var _name_edits: Array = []   # LineEdit des noms (onglet Animaux)
 var res_label: Label
 var close_btn: Button
 
@@ -34,7 +44,7 @@ func _ready() -> void:
 	tabs = TabContainer.new()
 	tabs.custom_minimum_size = Vector2(760, 400)
 	vb.add_child(tabs)
-	for t in ["Essentiel", "Chantiers", "Chalet"]:
+	for t in ["Essentiel", "Outils", "Chantiers", "Chalet", "Animaux", "Boutique"]:
 		var sc := ScrollContainer.new()
 		sc.name = t
 		sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
@@ -44,6 +54,12 @@ func _ready() -> void:
 		box.add_theme_constant_override("separation", 8)
 		sc.add_child(box)
 		boxes.append(box)
+	box_ess = boxes[0]
+	box_tools = boxes[1]
+	box_proj = boxes[2]
+	box_chalet = boxes[3]
+	box_animals = boxes[4]
+	box_shop = boxes[5]
 	res_label = Label.new()
 	res_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	res_label.custom_minimum_size = Vector2(760, 0)
@@ -121,17 +137,21 @@ func _upgrade_row(box: VBoxContainer, u: Dictionary, st: Dictionary) -> void:
 
 func refresh(st: Dictionary) -> void:
 	for box in boxes:
+		if box == box_animals:
+			continue   # reconstruit seulement si la liste change : on ne coupe pas la saisie d'un nom
 		for c in box.get_children():
 			c.queue_free()
+	_animals_tab(st)
+	_shop_tab(st)
 	# Essentiel
-	_header(boxes[0], "La table de tri et la machine sont gratuites : elles sont indispensables. Tu choisis où les poser.")
+	_header(box_ess, "La table de tri et la machine sont gratuites : elles sont indispensables. Tu choisis où les poser.")
 	for d in GameData.BUILDINGS:
-		_place_row(boxes[0], d, st)
+		_place_row(box_ess, d, st)
 		var nu: Dictionary = st["next"].get(d["key"], {})
 		if not nu.is_empty() and st["placed"].has(d["key"]):
-			_upgrade_row(boxes[0], nu, st)
+			_upgrade_row(box_ess, nu, st)
 	# Chantiers
-	_header(boxes[1], "Les chantiers coûtent des ressources triées. Chaque chantier terminé fait avancer la restauration.")
+	_header(box_proj, "Les chantiers coûtent des ressources triées. Chaque chantier terminé fait avancer la restauration.")
 	var tier := 0
 	for d in GameData.PROJECTS:
 		var dt: int = d.get("tier", 1)
@@ -140,19 +160,21 @@ func refresh(st: Dictionary) -> void:
 			tier = dt
 			if dt > 1:
 				var got: int = st["collected"]
-				_header(boxes[1], "Palier %d : dès %d objets ramassés %s" % [dt, unlock, "✔" if got >= unlock else "(encore %d)" % (unlock - got)])
-		_place_row(boxes[1], d, st, unlock)
+				_header(box_proj, "Palier %d : dès %d objets ramassés %s" % [dt, unlock, "✔" if got >= unlock else "(encore %d)" % (unlock - got)])
+		_place_row(box_proj, d, st, unlock)
 	# Chalet
 	var has_chalet: bool = st["placed"].has("chalet")
-	_header(boxes[2], "Le chalet et ses meubles sont la récompense : un endroit à toi dans la forêt rangée. Les planches viennent de la scierie (1 bûche → %d planches)." % GameData.planks_per_log(int(st["blv"]["scierie"])))
-	_place_row(boxes[2], GameData.CHALET, st)
+	_header(box_chalet, "Le chalet et ses meubles sont la récompense : un endroit à toi dans la forêt rangée. Les planches viennent de la scierie (1 bûche → %d planches)." % GameData.planks_per_log(int(st["blv"]["scierie"])))
+	_place_row(box_chalet, GameData.CHALET, st)
 	var furn: Dictionary = st["furniture"]
 	for f in GameData.FURNITURE:
 		var key: String = f["key"]
 		var done: bool = furn.get(key, false)
 		var c: Array = cost_text(f["cost"], st)
 		var btn := "Construit ✔" if done else ("Chalet requis" if not has_chalet else "Construire")
-		_row(boxes[2], "🪑 " + f["name"], "", "Coût : " + c[0], btn, done or not has_chalet or not c[1], func() -> void: furnish.emit(key))
+		_row(box_chalet, "🪑 " + f["name"], "", "Coût : " + c[0], btn, done or not has_chalet or not c[1], func() -> void: furnish.emit(key))
+	# Outils et aides (achetés avec les 🌿 gagnés en triant)
+	_tools_tab(st)
 	# Ressources disponibles
 	var parts := PackedStringArray()
 	for i in GameData.CATS.size():
@@ -160,3 +182,88 @@ func refresh(st: Dictionary) -> void:
 	parts.append("Planches %d" % st["planks"])
 	parts.append("🌿 %d" % st["res"])
 	res_label.text = "Tes ressources : " + " · ".join(parts)
+
+func _tools_tab(st: Dictionary) -> void:
+	var collected: int = st["collected"]
+	if collected < GameData.TOOLS_UNLOCK_COUNT:
+		_header(box_tools, "🔒 Les outils se débloquent après %d objets ramassés (actuellement %d)." % [GameData.TOOLS_UNLOCK_COUNT, collected])
+		return
+	_header(box_tools, "Outils et aides : ils s'achètent avec les 🌿 gagnés en triant (tu en as %d)." % int(st["res"]))
+	for u in GameData.UPGRADES:
+		var key: String = u["key"]
+		var mx: int = u.get("max", 1)
+		var lvl: int = st["lv"].get(key, 0) if mx > 1 else (1 if st["up"].get(key, false) else 0)
+		var cost: int = int(u["cost"]) * (lvl + 1)
+		var req: String = u.get("req", "")
+		var blocked: bool = req != "" and not (st["up"].get(req, false) or st["lv"].get(req, 0) > 0 or st["proj"].get(req, false))
+		var done: bool = lvl >= mx
+		var title: String = u["name"] + ("  [niv. %d/%d]" % [lvl, mx] if mx > 1 else "")
+		var line: String = "✔ Acquis" if done else ("Coût : %d 🌿" % cost + ("  (requiert : %s)" % req if blocked else ""))
+		_row(box_tools, "🔧 " + title, u["desc"], line, "Acquis" if done else "Acheter", done or blocked or int(st["res"]) < cost, func() -> void: bought.emit(key))
+
+const ANIMAL_ICONS := {"squirrel": "🐿", "hedgehog": "🦔", "fox": "🦊", "deer": "🦌", "bird": "🐦"}
+const ANIMAL_KINDS := {"squirrel": "Écureuil", "hedgehog": "Hérisson", "fox": "Renard", "deer": "Cerf", "bird": "Oiseau"}
+
+func _animals_tab(st: Dictionary) -> void:
+	var list: Array = st.get("animals", [])
+	if list.size() == _name_edits.size() and box_animals.get_child_count() > 0:
+		return
+	for c in box_animals.get_children():
+		c.queue_free()
+	_name_edits.clear()
+	if list.is_empty():
+		_header(box_animals, "Pas encore d'animaux. Les écureuils et hérissons s'achètent dans l'onglet Outils ; les oiseaux arrivent avec le nichoir, les renards avec la mangeoire, les cerfs quand la forêt revit.")
+		return
+	_header(box_animals, "Tes compagnons de la forêt. Clique sur un nom pour le changer : il s'affiche au-dessus de l'animal quand tu t'approches.")
+	for i in list.size():
+		var a: Dictionary = list[i]
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 12)
+		var l := Label.new()
+		l.text = "%s  %s" % [ANIMAL_ICONS.get(a["kind"], "🐾"), ANIMAL_KINDS.get(a["kind"], "Animal")]
+		l.custom_minimum_size = Vector2(200, 0)
+		l.add_theme_font_size_override("font_size", 17)
+		row.add_child(l)
+		var e := LineEdit.new()
+		e.text = a["name"]
+		e.max_length = 20
+		e.custom_minimum_size = Vector2(320, 40)
+		e.placeholder_text = "Nom"
+		e.text_changed.connect(func(txt: String) -> void: rename.emit(i, txt))
+		e.text_submitted.connect(func(_txt: String) -> void: e.release_focus())
+		row.add_child(e)
+		box_animals.add_child(row)
+		_name_edits.append(e)
+
+## Après l'achat d'un écureuil ou d'un hérisson : on ouvre l'onglet Animaux sur son nom, prêt à être changé.
+func focus_last_animal() -> void:
+	if _name_edits.is_empty():
+		return
+	tabs.current_tab = 4
+	var e: LineEdit = _name_edits[-1]
+	e.grab_focus.call_deferred()
+	e.select_all.call_deferred()
+
+func _shop_tab(st: Dictionary) -> void:
+	var gold: int = st.get("gold", 0)
+	_header(box_shop, "✨ Glands dorés : %d  ·  tu en gagnes %d tous les %d objets ramassés. Achète des skins et change-les quand tu veux." % [gold, GameData.GOLD_PER_STEP, GameData.GOLD_STEP])
+	var owned: Dictionary = st.get("skins_owned", {})
+	var worn: Dictionary = st.get("skins_on", {})
+	for c in GameData.SKIN_CATS:
+		var cat: String = c[0]
+		var t := Label.new()
+		t.text = c[1]
+		t.add_theme_font_size_override("font_size", 19)
+		t.add_theme_color_override("font_color", Color(0.95, 0.85, 0.5))
+		box_shop.add_child(t)
+		for s in GameData.SKINS:
+			if s["cat"] != cat:
+				continue
+			var key: String = s["key"]
+			var cost: int = s["cost"]
+			var equipped: bool = worn.get(cat, GameData.default_skin(cat)) == key
+			var have: bool = cost == 0 or owned.has(key)
+			var line := "Gratuit" if cost == 0 else ("Acheté" if have else "Prix : %d ✨" % cost)
+			var btn := "Équipé ✔" if equipped else ("Équiper" if have else "Acheter")
+			var key_c := key
+			_row(box_shop, "   " + s["name"], "", line, btn, equipped or (not have and gold < cost), skin.emit.bind(key_c))
